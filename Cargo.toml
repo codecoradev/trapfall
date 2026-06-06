@@ -34,10 +34,11 @@ axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
-# HTTP client (minimal, no reqwest)
+# HTTP client
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = "0.1"
 http-body-util = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
 
 # Crypto
 blake3 = "1"

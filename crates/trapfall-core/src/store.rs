@@ -238,6 +238,148 @@ impl Store {
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
+
+    // ── Alert Rules ────────────────────────────────────────────────────
+
+    pub async fn create_alert_rule(
+        &self,
+        project_id: &str,
+        name: &str,
+        conditions: &str,
+        action_type: &str,
+        action_config: &str,
+        cooldown_seconds: i64,
+    ) -> Result<trapfall_proto::AlertRule> {
+        let id = new_id();
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO alert_rules (id, project_id, name, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(project_id)
+        .bind(name)
+        .bind(conditions)
+        .bind(action_type)
+        .bind(action_config)
+        .bind(cooldown_seconds)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(trapfall_proto::AlertRule {
+            id,
+            project_id: project_id.to_string(),
+            name: name.to_string(),
+            enabled: true,
+            conditions: serde_json::from_str(conditions)
+                .unwrap_or(serde_json::Value::Object(Default::default())),
+            action_type: action_type.to_string(),
+            action_config: serde_json::from_str(action_config)
+                .unwrap_or(serde_json::Value::Object(Default::default())),
+            cooldown_seconds,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    pub async fn list_alert_rules(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<trapfall_proto::AlertRule>> {
+        let rows = sqlx::query_as::<_, AlertRuleRow>(
+            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE project_id = ? ORDER BY created_at",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn get_alert_rule(&self, rule_id: &str) -> Result<Option<trapfall_proto::AlertRule>> {
+        let row = sqlx::query_as::<_, AlertRuleRow>(
+            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE id = ?",
+        )
+        .bind(rule_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn delete_alert_rule(&self, rule_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM alert_rules WHERE id = ?")
+            .bind(rule_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn toggle_alert_rule(&self, rule_id: &str, enabled: bool) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("UPDATE alert_rules SET enabled = ?, updated_at = ? WHERE id = ?")
+            .bind(enabled)
+            .bind(&now)
+            .bind(rule_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get all enabled rules for a project (used by rules engine).
+    pub async fn get_enabled_rules_for_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<trapfall_proto::AlertRule>> {
+        let rows = sqlx::query_as::<_, AlertRuleRow>(
+            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE project_id = ? AND enabled = 1",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    // ── Alert History ───────────────────────────────────────────────────
+
+    pub async fn insert_alert_history(
+        &self,
+        rule_id: &str,
+        project_id: &str,
+        issue_id: &str,
+    ) -> Result<String> {
+        let id = new_id();
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO alert_history (id, rule_id, project_id, issue_id, status, attempts, created_at) VALUES (?, ?, ?, ?, 'pending', 0, ?)",
+        )
+        .bind(&id)
+        .bind(rule_id)
+        .bind(project_id)
+        .bind(issue_id)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    pub async fn mark_alert_sent(&self, history_id: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("UPDATE alert_history SET status = 'sent', sent_at = ?, attempts = attempts + 1 WHERE id = ?")
+            .bind(&now)
+            .bind(history_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn mark_alert_failed(&self, history_id: &str, error: &str) -> Result<()> {
+        sqlx::query("UPDATE alert_history SET status = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?")
+            .bind(error)
+            .bind(history_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 // ── Row types (sqlx mapping) ────────────────────────────────────────────
@@ -312,6 +454,39 @@ impl From<EventRow> for StoredEvent {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+#[derive(sqlx::FromRow)]
+struct AlertRuleRow {
+    id: String,
+    project_id: String,
+    name: String,
+    enabled: bool,
+    conditions: String,
+    action_type: String,
+    action_config: String,
+    cooldown_seconds: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<AlertRuleRow> for trapfall_proto::AlertRule {
+    fn from(r: AlertRuleRow) -> Self {
+        Self {
+            id: r.id,
+            project_id: r.project_id,
+            name: r.name,
+            enabled: r.enabled,
+            conditions: serde_json::from_str(&r.conditions)
+                .unwrap_or(serde_json::Value::Object(Default::default())),
+            action_type: r.action_type,
+            action_config: serde_json::from_str(&r.action_config)
+                .unwrap_or(serde_json::Value::Object(Default::default())),
+            cooldown_seconds: r.cooldown_seconds,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }
+    }
+}
 
 fn level_to_str(level: Level) -> String {
     serde_json::to_string(&level).unwrap().trim_matches('"').to_string()

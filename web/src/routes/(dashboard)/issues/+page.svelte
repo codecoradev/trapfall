@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api, type Issue, type Project } from '$lib/api';
+	import { getWsClient, type ServerMessage } from '$lib/ws';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
@@ -18,6 +19,7 @@
 	let project: Project | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');
+	let liveIndicator = $state(false);
 
 	const levelColors: Record<string, string> = {
 		fatal: 'bg-red-500/15 text-red-500',
@@ -45,9 +47,10 @@
 		return `${Math.floor(diff / 86400)}d ago`;
 	}
 
+	let wsUnsub: (() => void) | null = $state(null);
+
 	onMount(async () => {
 		try {
-			// Get first project
 			const projects = await api.listProjects();
 			if (projects.length === 0) {
 				error = 'No projects found. Create one via setup.';
@@ -63,6 +66,25 @@
 		} finally {
 			loading = false;
 		}
+
+		// Subscribe to WebSocket for live updates
+		const ws = getWsClient();
+		ws.connect();
+		wsUnsub = ws.subscribe((msg: ServerMessage) => {
+			liveIndicator = true;
+			setTimeout(() => (liveIndicator = false), 2000);
+
+			if (msg.type === 'IssueUpdated' || msg.type === 'IssueCreated') {
+				const incoming = msg.issue as unknown as Issue;
+				const idx = issues.findIndex((i) => i.id === incoming.id);
+				if (idx >= 0) {
+					issues[idx] = incoming;
+				} else {
+					issues.unshift(incoming);
+				}
+				issues = issues;
+			}
+		});
 	});
 </script>
 
@@ -73,9 +95,17 @@
 <div class="p-4 lg:p-6 space-y-4">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Issues</h1>
-		{#if project}
-			<Badge variant="outline">{project.name}</Badge>
-		{/if}
+		<div class="flex items-center gap-2">
+			{#if liveIndicator}
+				<span class="inline-flex items-center gap-1 text-xs text-emerald-500">
+					<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+					Live
+				</span>
+			{/if}
+			{#if project}
+				<Badge variant="outline">{project.name}</Badge>
+			{/if}
+		</div>
 	</div>
 
 	{#if loading}

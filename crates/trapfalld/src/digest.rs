@@ -19,16 +19,23 @@ pub struct DigestTask {
     pool: SqlitePool,
     rx: mpsc::Receiver<IngestEvent>,
     ws_tx: Option<mpsc::UnboundedSender<ServerMessage>>,
+    alert_tx: Option<mpsc::UnboundedSender<Issue>>,
 }
 
 impl DigestTask {
     pub fn new(pool: SqlitePool, rx: mpsc::Receiver<IngestEvent>) -> Self {
-        Self { pool, rx, ws_tx: None }
+        Self { pool, rx, ws_tx: None, alert_tx: None }
     }
 
     /// Attach a channel for WebSocket broadcast notifications.
     pub fn with_ws_sender(mut self, tx: mpsc::UnboundedSender<ServerMessage>) -> Self {
         self.ws_tx = Some(tx);
+        self
+    }
+
+    /// Attach a channel for alert engine notifications.
+    pub fn with_alert_sender(mut self, tx: mpsc::UnboundedSender<Issue>) -> Self {
+        self.alert_tx = Some(tx);
         self
     }
 
@@ -43,18 +50,18 @@ impl DigestTask {
                 Some(event) = self.rx.recv() => {
                     buffer.push(event);
                     if buffer.len() >= FLUSH_THRESHOLD {
-                        Self::flush(&store, &mut buffer, &self.ws_tx).await;
+                        Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
                     }
                 }
                 _ = interval.tick() => {
                     if !buffer.is_empty() {
-                        Self::flush(&store, &mut buffer, &self.ws_tx).await;
+                        Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
                     }
                 }
                 else => {
                     // Channel closed — drain remaining
                     if !buffer.is_empty() {
-                        Self::flush(&store, &mut buffer, &self.ws_tx).await;
+                        Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
                     }
                     break;
                 }
@@ -68,6 +75,7 @@ impl DigestTask {
         store: &Store,
         buffer: &mut Vec<IngestEvent>,
         ws_tx: &Option<mpsc::UnboundedSender<ServerMessage>>,
+        alert_tx: &Option<mpsc::UnboundedSender<Issue>>,
     ) {
         let events = std::mem::take(buffer);
         let count = events.len();
@@ -78,6 +86,9 @@ impl DigestTask {
                     if let Some(tx) = ws_tx {
                         let msg = ServerMessage::IssueUpdated { issue: issue.clone() };
                         let _ = tx.send(msg);
+                    }
+                    if let Some(tx) = alert_tx {
+                        let _ = tx.send(issue.clone());
                     }
                 }
                 Err(e) => {

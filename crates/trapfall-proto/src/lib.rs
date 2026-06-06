@@ -225,6 +225,44 @@ pub struct StoredEvent {
     pub received_at: String,
 }
 
+// ── Alert Rule Types ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertRule {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub conditions: serde_json::Value,
+    pub action_type: String,
+    pub action_config: serde_json::Value,
+    pub cooldown_seconds: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAlertRule {
+    pub name: String,
+    pub conditions: serde_json::Value,
+    pub action_type: Option<String>,
+    pub action_config: Option<serde_json::Value>,
+    pub cooldown_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertHistory {
+    pub id: String,
+    pub rule_id: String,
+    pub project_id: String,
+    pub issue_id: String,
+    pub status: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub sent_at: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

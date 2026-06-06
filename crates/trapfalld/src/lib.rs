@@ -1,5 +1,6 @@
 //! trapfalld library — shared between binary and integration tests.
 
+pub mod alert;
 pub mod auth;
 pub mod config;
 pub mod digest;
@@ -10,6 +11,7 @@ pub mod server;
 pub mod spa;
 pub mod ws;
 
+pub use alert::spawn_alert_engine;
 pub use config::Config;
 pub use digest::DigestTask;
 pub use server::AppState;

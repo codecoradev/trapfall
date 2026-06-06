@@ -46,6 +46,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/issues/{issue_id}", get(get_issue))
         .route("/api/0/issues/{issue_id}/status", post(set_issue_status))
         .route("/api/0/issues/{issue_id}/events", get(list_events))
+        // ── Alert Rules API ────────────────────────────────────────────
+        .route("/api/0/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
+        .route("/api/0/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
+        .route("/api/0/rules/{rule_id}/toggle", post(toggle_alert_rule))
         .route("/api/0/ws", get(crate::ws::ws_handler))
         .merge(auth_routes)
         .merge(protected_routes)
@@ -242,4 +246,94 @@ async fn list_events(
     let total = events.len() as i64;
 
     Ok(Json(ListResponse { data: events, total, page: query.page, per_page: query.per_page }))
+}
+
+// ── Alert Rule Handlers ────────────────────────────────────────────────
+
+async fn list_alert_rules(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<trapfall_proto::AlertRule>>, StatusCode> {
+    let store = Store::new(state.pool);
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let rules =
+        store.list_alert_rules(&project.id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rules))
+}
+
+async fn create_alert_rule(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Json(req): Json<trapfall_proto::CreateAlertRule>,
+) -> Result<Json<trapfall_proto::AlertRule>, StatusCode> {
+    let store = Store::new(state.pool);
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let action_type = req.action_type.unwrap_or_else(|| "webhook".to_string());
+    let action_config = req.action_config.unwrap_or(serde_json::json!({}));
+    let cooldown = req.cooldown_seconds.unwrap_or(300);
+
+    let rule = store
+        .create_alert_rule(
+            &project.id,
+            &req.name,
+            &serde_json::to_string(&req.conditions).unwrap_or_default(),
+            &action_type,
+            &serde_json::to_string(&action_config).unwrap_or_default(),
+            cooldown,
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rule))
+}
+
+async fn get_alert_rule(
+    State(state): State<AppState>,
+    Path(rule_id): Path<String>,
+) -> Result<Json<trapfall_proto::AlertRule>, StatusCode> {
+    let store = Store::new(state.pool);
+    store
+        .get_alert_rule(&rule_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)
+        .map(Json)
+}
+
+async fn delete_alert_rule(
+    State(state): State<AppState>,
+    Path(rule_id): Path<String>,
+) -> StatusCode {
+    let store = Store::new(state.pool);
+    match store.delete_alert_rule(&rule_id).await {
+        Ok(true) => StatusCode::OK,
+        Ok(false) => StatusCode::NOT_FOUND,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[derive(Deserialize)]
+struct ToggleRequest {
+    enabled: bool,
+}
+
+async fn toggle_alert_rule(
+    State(state): State<AppState>,
+    Path(rule_id): Path<String>,
+    Json(req): Json<ToggleRequest>,
+) -> StatusCode {
+    let store = Store::new(state.pool);
+    match store.toggle_alert_rule(&rule_id, req.enabled).await {
+        Ok(()) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
