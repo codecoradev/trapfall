@@ -21,8 +21,9 @@ Thumbs.db
 .env
 .env.*
 
-# Web build artifacts
-/web/build/
+# Web build artifacts (keep placeholder for rust-embed)
+/web/build/*
+!/web/build/index.html
 /web/node_modules/
 /web/.svelte-kit/
 /web/bun.lockb
