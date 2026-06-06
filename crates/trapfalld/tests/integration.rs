@@ -10,7 +10,8 @@ use std::path::PathBuf;
 
 use trapfalld::rate_limit::RateLimiter;
 use trapfalld::server::router;
-use trapfalld::{AppState, Config};
+use trapfalld::{AppState, Config, WsHub};
+
 async fn test_pool() -> SqlitePool {
     let options = SqliteConnectOptions::new().filename(":memory:").create_if_missing(true);
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.unwrap();
@@ -56,7 +57,7 @@ fn make_state(pool: SqlitePool, rate_limiter: RateLimiter) -> AppState {
         while rx.recv().await.is_some() {}
     });
     let config = Config { db_path: PathBuf::from(":memory:"), listen_addr: "0.0.0.0:9090".into() };
-    AppState { pool, config, ingest_tx: tx, rate_limiter }
+    AppState { pool, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
 }
 
 #[tokio::test]

@@ -26,6 +26,7 @@ pub struct AppState {
     pub config: Config,
     pub ingest_tx: mpsc::Sender<IngestEvent>,
     pub rate_limiter: crate::rate_limit::RateLimiter,
+    pub ws_hub: crate::ws::WsHub,
 }
 
 /// Build the Axum router.
@@ -45,6 +46,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/issues/{issue_id}", get(get_issue))
         .route("/api/0/issues/{issue_id}/status", post(set_issue_status))
         .route("/api/0/issues/{issue_id}/events", get(list_events))
+        .route("/api/0/ws", get(crate::ws::ws_handler))
         .merge(auth_routes)
         .merge(protected_routes)
         .fallback(crate::spa::spa_handler)
