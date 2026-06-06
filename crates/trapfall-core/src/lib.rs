@@ -2,9 +2,11 @@
 //!
 //! Core logic — storage trait, config, auth, fingerprint.
 
+pub mod auth;
 pub mod fingerprint;
 pub mod store;
 
+pub use auth::{UserInfo, hash_password, verify_password};
 pub use fingerprint::derive_fingerprint;
 pub use store::Store;
 
