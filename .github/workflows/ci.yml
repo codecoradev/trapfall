@@ -83,6 +83,7 @@ jobs:
       - name: Run cora review
         env:
           CORA_API_KEY: ${{ secrets.CORA_API_KEY }}
+          CORA_BASE_URL: ${{ secrets.CORA_BASE_URL }}
         run: |
           cora review --ci --base develop --format compact --output cora-results.sarif
       - name: Check SARIF for findings

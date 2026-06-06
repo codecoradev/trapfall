@@ -1,5 +1,8 @@
 # Cora CLI — AI code review configuration
 # https://github.com/codecoradev/cora-cli
+#
+# Local dev: uses LiteLLM proxy (localhost:4000)
+# CI: overridden by CORA_API_KEY + CORA_BASE_URL env vars
 
 provider:
   provider: openai
