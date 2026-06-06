@@ -90,11 +90,11 @@ pub fn extract_sentry_key(auth_header: &str) -> Option<String> {
         .split(',')
         .find_map(|part| {
             let trimmed = part.trim();
-            trimmed.strip_prefix("sentry_key=").map(|v| v.to_string())
+            trimmed.strip_prefix("sentry_key=").map(str::to_string)
         })
         .or_else(|| {
             // Also try without "Sentry " prefix
-            auth_header.strip_prefix("Sentry ").and_then(|rest| extract_sentry_key(rest))
+            auth_header.strip_prefix("Sentry ").and_then(extract_sentry_key)
         })
 }
 
