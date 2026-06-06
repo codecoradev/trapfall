@@ -72,11 +72,7 @@ mod tests {
     use super::*;
     use trapfall_proto::*;
 
-    fn make_exception_event(
-        exc_type: &str,
-        function: Option<&str>,
-        filename: Option<&str>,
-    ) -> Event {
+    fn make_exception_event(exc_type: &str, function: Option<&str>, filename: Option<&str>) -> Event {
         Event {
             event_id: "test-id".into(),
             level: Level::Error,

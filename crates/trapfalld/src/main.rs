@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use trapfalld::{AppState, Config, DigestTask, WsHub, spawn_alert_engine};
+use trapfalld::{spawn_alert_engine, AppState, Config, DigestTask, WsHub};
 
 #[derive(Parser, Debug)]
 #[command(name = "trapfall", version, about = "TrapFall error capture daemon")]
@@ -68,17 +68,14 @@ async fn main() -> Result<()> {
     // Init tracing
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| cli.log_level.clone().into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| cli.log_level.clone().into()),
         )
         .init();
 
     let pool = trapfall_core::open_pool(&format!("sqlite:{}", cli.db.display())).await?;
     trapfall_core::run_migrations(&pool).await?;
 
-    match cli.command.unwrap_or(Commands::Serve {
-        listen: "0.0.0.0:9090".into(),
-    }) {
+    match cli.command.unwrap_or(Commands::Serve { listen: "0.0.0.0:9090".into() }) {
         Commands::Serve { listen } => run_server(pool, listen).await,
         Commands::ProjectList => {
             let store = trapfall_core::Store::new(pool);
@@ -88,7 +85,14 @@ async fn main() -> Result<()> {
             } else {
                 println!("{:<36} {:<20} {:<10} {}", "ID", "SLUG", "NAME", "DSN");
                 for p in &projects {
-                    println!("{} {:<20} {:<10} {}...{}", p.id, p.slug, p.name, &p.dsn_public[..8], &p.dsn_public[p.dsn_public.len() - 4..]);
+                    println!(
+                        "{} {:<20} {:<10} {}...{}",
+                        p.id,
+                        p.slug,
+                        p.name,
+                        &p.dsn_public[..8],
+                        &p.dsn_public[p.dsn_public.len() - 4..]
+                    );
                 }
             }
             Ok(())
@@ -142,16 +146,13 @@ async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
 
     // WebSocket hub
     let ws_hub = WsHub::new(256);
-    let (ws_broadcast_tx, mut ws_broadcast_rx) =
-        mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
+    let (ws_broadcast_tx, mut ws_broadcast_rx) = mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
 
     // Alert engine
     let alert_tx = spawn_alert_engine(pool.clone(), 256);
 
     // Digest task
-    let digest = DigestTask::new(pool.clone(), ingest_rx)
-        .with_ws_sender(ws_broadcast_tx)
-        .with_alert_sender(alert_tx);
+    let digest = DigestTask::new(pool.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx).with_alert_sender(alert_tx);
     let digest_handle = tokio::spawn(async move {
         if let Err(e) = digest.run().await {
             tracing::error!("Digest task failed: {e}");
@@ -168,8 +169,7 @@ async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
 
     // Retention task
     let retention_pool = pool.clone();
-    let retention_handle =
-        tokio::spawn(async move { trapfalld::retention::run_retention(retention_pool, None).await });
+    let retention_handle = tokio::spawn(async move { trapfalld::retention::run_retention(retention_pool, None).await });
 
     // App state
     let state = AppState {

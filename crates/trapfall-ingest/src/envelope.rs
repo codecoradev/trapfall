@@ -38,9 +38,7 @@ fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
 
 fn decompress_deflate(data: &[u8]) -> Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(data.len() * 2);
-    flate2::read::DeflateDecoder::new(data)
-        .read_to_end(&mut buf)
-        .context("deflate decompression failed")?;
+    flate2::read::DeflateDecoder::new(data).read_to_end(&mut buf).context("deflate decompression failed")?;
     Ok(buf)
 }
 
@@ -61,8 +59,7 @@ fn parse_envelope_text(text: &str) -> Result<Vec<Event>> {
 
     // Process items: header line + body line pairs
     while let Some(item_header_line) = lines.next() {
-        let item_header: serde_json::Value =
-            serde_json::from_str(item_header_line).unwrap_or_default();
+        let item_header: serde_json::Value = serde_json::from_str(item_header_line).unwrap_or_default();
 
         let item_type = item_header.get("type").and_then(|v| v.as_str()).unwrap_or("");
 

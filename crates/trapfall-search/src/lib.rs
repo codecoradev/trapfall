@@ -61,8 +61,7 @@ pub async fn search_issues(
         bindings.push(l.to_string());
     }
 
-    let where_ext =
-        if conds.is_empty() { String::new() } else { format!(" AND {}", conds.join(" AND ")) };
+    let where_ext = if conds.is_empty() { String::new() } else { format!(" AND {}", conds.join(" AND ")) };
 
     let full_sql = format!("{sql_base}{where_ext} ORDER BY last_seen DESC LIMIT ? OFFSET ?");
 
@@ -98,8 +97,7 @@ pub async fn search_issues(
             culprit,
             status: serde_json::from_value(serde_json::Value::String(status_str))
                 .unwrap_or(trapfall_proto::IssueStatus::Unresolved),
-            level: serde_json::from_value(serde_json::Value::String(level_str))
-                .unwrap_or(Level::Error),
+            level: serde_json::from_value(serde_json::Value::String(level_str)).unwrap_or(Level::Error),
             count: count as i64,
             user_count: user_count as i64,
             first_seen,

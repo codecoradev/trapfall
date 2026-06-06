@@ -88,9 +88,7 @@ fn matches_rule(rule: &AlertRule, issue: &Issue) -> bool {
     // Level filter
     if let Some(levels) = conditions.get("level").and_then(|v| v.as_array()) {
         let level_str = format!("{:?}", issue.level).to_lowercase();
-        let matches_level = levels
-            .iter()
-            .any(|l| l.as_str().map(|s| s.to_lowercase() == level_str).unwrap_or(false));
+        let matches_level = levels.iter().any(|l| l.as_str().map(|s| s.to_lowercase() == level_str).unwrap_or(false));
         if !matches_level {
             return false;
         }
@@ -114,11 +112,7 @@ fn matches_rule(rule: &AlertRule, issue: &Issue) -> bool {
 }
 
 /// Check if a rule has fired within its cooldown window.
-async fn is_cooling_down(
-    pool: &SqlitePool,
-    rule_id: &str,
-    cooldown_seconds: i64,
-) -> anyhow::Result<bool> {
+async fn is_cooling_down(pool: &SqlitePool, rule_id: &str, cooldown_seconds: i64) -> anyhow::Result<bool> {
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT created_at FROM alert_history WHERE rule_id = ? AND status = 'sent' ORDER BY created_at DESC LIMIT 1",
     )
@@ -128,9 +122,8 @@ async fn is_cooling_down(
 
     if let Some((last_fired,)) = row {
         if let Ok(fired_time) = chrono::DateTime::parse_from_rfc3339(&last_fired) {
-            let elapsed = chrono::Utc::now()
-                .signed_duration_since(fired_time.with_timezone(&chrono::Utc))
-                .num_seconds();
+            let elapsed =
+                chrono::Utc::now().signed_duration_since(fired_time.with_timezone(&chrono::Utc)).num_seconds();
             return Ok(elapsed < cooldown_seconds);
         }
     }
@@ -162,8 +155,7 @@ async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()>
     });
 
     let client = reqwest::Client::new();
-    let resp =
-        client.post(url).json(&payload).timeout(std::time::Duration::from_secs(10)).send().await?;
+    let resp = client.post(url).json(&payload).timeout(std::time::Duration::from_secs(10)).send().await?;
 
     if resp.status().is_success() {
         tracing::info!("Webhook dispatched to {url} for rule '{}'", rule.name);

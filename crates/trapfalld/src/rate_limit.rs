@@ -60,9 +60,8 @@ impl RateLimiter {
     /// Returns true if allowed, false if rate limited.
     pub fn try_consume(&self, project_id: &str, cost: f64) -> bool {
         let mut buckets = self.buckets.lock().unwrap();
-        let bucket = buckets
-            .entry(project_id.to_string())
-            .or_insert_with(|| Bucket::new(self.max_tokens, self.refill_per_sec));
+        let bucket =
+            buckets.entry(project_id.to_string()).or_insert_with(|| Bucket::new(self.max_tokens, self.refill_per_sec));
         bucket.try_consume(cost)
     }
 
@@ -70,9 +69,8 @@ impl RateLimiter {
     #[allow(dead_code)]
     pub fn available_tokens(&self, project_id: &str) -> f64 {
         let mut buckets = self.buckets.lock().unwrap();
-        let bucket = buckets
-            .entry(project_id.to_string())
-            .or_insert_with(|| Bucket::new(self.max_tokens, self.refill_per_sec));
+        let bucket =
+            buckets.entry(project_id.to_string()).or_insert_with(|| Bucket::new(self.max_tokens, self.refill_per_sec));
         bucket.refill();
         bucket.tokens
     }

@@ -42,8 +42,7 @@ impl DigestTask {
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let store = Store::new(self.pool.clone());
         let mut buffer: Vec<IngestEvent> = Vec::with_capacity(FLUSH_THRESHOLD);
-        let mut interval =
-            tokio::time::interval(std::time::Duration::from_millis(FLUSH_INTERVAL_MS));
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(FLUSH_INTERVAL_MS));
 
         loop {
             tokio::select! {
@@ -123,9 +122,7 @@ impl DigestTask {
         let level = ev.event.level;
 
         // Upsert issue (creates or increments count)
-        let issue = store
-            .upsert_issue(&ev.project_id, &ev.fingerprint.hash, &title, culprit.as_deref(), level)
-            .await?;
+        let issue = store.upsert_issue(&ev.project_id, &ev.fingerprint.hash, &title, culprit.as_deref(), level).await?;
 
         // Store raw event JSON
         let event_json = serde_json::to_string(&ev.event).unwrap_or_default();
@@ -201,11 +198,7 @@ mod tests {
                 server_name: None,
                 breadcrumbs: Breadcrumbs::default(),
                 exception: Some(ExceptionValues {
-                    values: vec![Exception {
-                        exc_type: "Panic".into(),
-                        value: None,
-                        stacktrace: None,
-                    }],
+                    values: vec![Exception { exc_type: "Panic".into(), value: None, stacktrace: None }],
                 }),
                 message: Some("fallback msg".into()),
                 tags: serde_json::Value::Null,

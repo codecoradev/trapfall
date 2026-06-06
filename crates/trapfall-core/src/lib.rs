@@ -6,13 +6,13 @@ pub mod auth;
 pub mod fingerprint;
 pub mod store;
 
-pub use auth::{UserInfo, hash_password, verify_password};
+pub use auth::{hash_password, verify_password, UserInfo};
 pub use fingerprint::derive_fingerprint;
 pub use store::Store;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::SqlitePool;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -30,12 +30,8 @@ pub async fn open_pool(db_path: &str) -> Result<SqlitePool> {
 
 /// Run all database migrations.
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql"))
-        .execute(pool)
-        .await?;
-    sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql"))
-        .execute(pool)
-        .await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql")).execute(pool).await?;
     Ok(())
 }
 

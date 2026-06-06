@@ -4,7 +4,7 @@
 //! Falls back to index.html for client-side routing.
 
 use axum::{
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
 };
 use rust_embed::Embed;
@@ -21,8 +21,7 @@ pub async fn spa_handler(uri: axum::http::Uri) -> Response {
     // Try exact file match first
     if let Some(file) = Assets::get(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
-        return (StatusCode::OK, [(header::CONTENT_TYPE, mime.as_ref())], file.data.to_vec())
-            .into_response();
+        return (StatusCode::OK, [(header::CONTENT_TYPE, mime.as_ref())], file.data.to_vec()).into_response();
     }
 
     // Fallback to index.html for client-side routing

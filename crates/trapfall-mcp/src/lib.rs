@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use trapfall_proto::IssueStatus;
 
@@ -78,8 +78,7 @@ async fn handle_request(method: &str, params: Value, pool: &SqlitePool) -> Resul
         "notifications/initialized" => Ok(Value::Null),
         "tools/list" => Ok(json!({ "tools": tools_list() })),
         "tools/call" => {
-            let tool_name =
-                params.get("name").and_then(|n| n.as_str()).ok_or("missing tool name")?;
+            let tool_name = params.get("name").and_then(|n| n.as_str()).ok_or("missing tool name")?;
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             call_tool(tool_name, args, pool).await
         }
@@ -225,13 +224,9 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
 
     match name {
         "list_issues" => {
-            let slug =
-                args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
-            let project = store
-                .get_project_by_slug(slug)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("project not found")?;
+            let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
+            let project =
+                store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
 
             let mut query = format!(
                 "SELECT id, project_id, fingerprint, title, culprit, status, level, \
@@ -279,25 +274,25 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
                 }));
             }
 
-            Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&issues).unwrap_or_default() }] }))
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&issues).unwrap_or_default() }] }),
+            )
         }
         "get_issue" => {
             let id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
-            let issue =
-                store.get_issue(id).await.map_err(|e| e.to_string())?.ok_or("issue not found")?;
-            Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&issue).unwrap_or_default() }] }))
+            let issue = store.get_issue(id).await.map_err(|e| e.to_string())?.ok_or("issue not found")?;
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&issue).unwrap_or_default() }] }),
+            )
         }
         "get_event" => {
-            let event_id =
-                args.get("event_id").and_then(|v| v.as_str()).ok_or("missing event_id")?;
-            let row = sqlx::query(
-                "SELECT id, issue_id, project_id, data, received_at FROM events WHERE id = ?",
-            )
-            .bind(event_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or("event not found")?;
+            let event_id = args.get("event_id").and_then(|v| v.as_str()).ok_or("missing event_id")?;
+            let row = sqlx::query("SELECT id, issue_id, project_id, data, received_at FROM events WHERE id = ?")
+                .bind(event_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("event not found")?;
 
             let id: String = row.try_get("id").map_err(|e| e.to_string())?;
             let issue_id: String = row.try_get("issue_id").map_err(|e| e.to_string())?;
@@ -313,43 +308,28 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
             })).unwrap_or_default() }] }))
         }
         "set_status" => {
-            let issue_id =
-                args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
+            let issue_id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
             let status_str = args.get("status").and_then(|v| v.as_str()).ok_or("missing status")?;
             let status: IssueStatus = serde_json::from_value(json!(status_str))
                 .map_err(|e: serde_json::Error| format!("invalid status: {e}"))?;
-            store
-                .set_issue_status(issue_id, status)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(json!({ "content": [{ "type": "text", "text": format!("Issue {} status set to {}", issue_id, status_str) }] }))
+            store.set_issue_status(issue_id, status).await.map_err(|e| e.to_string())?;
+            Ok(
+                json!({ "content": [{ "type": "text", "text": format!("Issue {} status set to {}", issue_id, status_str) }] }),
+            )
         }
         "search_issues" => {
             let query = args.get("query").and_then(|v| v.as_str()).ok_or("missing query")?;
             let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
 
-            let project_id =
-                if let Some(slug) = args.get("project_slug").and_then(|v| v.as_str()) {
-                    store
-                        .get_project_by_slug(slug)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .map(|p| p.id)
-                } else {
-                    None
-                };
+            let project_id = if let Some(slug) = args.get("project_slug").and_then(|v| v.as_str()) {
+                store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.map(|p| p.id)
+            } else {
+                None
+            };
 
-            let issues = trapfall_search::search_issues(
-                pool,
-                query,
-                project_id.as_deref(),
-                None,
-                None,
-                limit,
-                0,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+            let issues = trapfall_search::search_issues(pool, query, project_id.as_deref(), None, None, limit, 0)
+                .await
+                .map_err(|e| e.to_string())?;
 
             let results: Vec<Value> = issues
                 .iter()
@@ -365,7 +345,9 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
                 })
                 .collect();
 
-            Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&results).unwrap_or_default() }] }))
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&results).unwrap_or_default() }] }),
+            )
         }
         "list_projects" => {
             let projects = store.list_projects().await.map_err(|e| e.to_string())?;
@@ -380,15 +362,14 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
                     })
                 })
                 .collect();
-            Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&list).unwrap_or_default() }] }))
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&list).unwrap_or_default() }] }),
+            )
         }
         "get_project" => {
             let slug = args.get("slug").and_then(|v| v.as_str()).ok_or("missing slug")?;
-            let project = store
-                .get_project_by_slug(slug)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("project not found")?;
+            let project =
+                store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
             Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&json!({
                 "id": project.id,
                 "slug": project.slug,
@@ -397,42 +378,32 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
             })).unwrap_or_default() }] }))
         }
         "get_project_stats" => {
-            let slug =
-                args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
-            let project = store
-                .get_project_by_slug(slug)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("project not found")?;
+            let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
+            let project =
+                store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
 
-            let total: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM issues WHERE project_id = ?",
-            )
-            .bind(&project.id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-            let unresolved: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM issues WHERE project_id = ? AND status = 'unresolved'",
-            )
-            .bind(&project.id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-            let errors: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM issues WHERE project_id = ? AND level = 'error'",
-            )
-            .bind(&project.id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-            let fatal: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM issues WHERE project_id = ? AND level = 'fatal'",
-            )
-            .bind(&project.id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM issues WHERE project_id = ?")
+                .bind(&project.id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            let unresolved: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM issues WHERE project_id = ? AND status = 'unresolved'")
+                    .bind(&project.id)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let errors: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM issues WHERE project_id = ? AND level = 'error'")
+                    .bind(&project.id)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let fatal: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM issues WHERE project_id = ? AND level = 'fatal'")
+                .bind(&project.id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| e.to_string())?;
 
             Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&json!({
                 "project": project.slug,
@@ -443,13 +414,9 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
             })).unwrap_or_default() }] }))
         }
         "list_alert_rules" => {
-            let slug =
-                args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
-            let project = store
-                .get_project_by_slug(slug)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("project not found")?;
+            let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
+            let project =
+                store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
             let rules = store.list_alert_rules(&project.id).await.map_err(|e| e.to_string())?;
             let list: Vec<Value> = rules
                 .iter()
@@ -464,16 +431,14 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
                     })
                 })
                 .collect();
-            Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&list).unwrap_or_default() }] }))
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&list).unwrap_or_default() }] }),
+            )
         }
         "list_events" => {
-            let issue_id =
-                args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
+            let issue_id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
             let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
-            let events = store
-                .list_events(issue_id, limit, 0)
-                .await
-                .map_err(|e| e.to_string())?;
+            let events = store.list_events(issue_id, limit, 0).await.map_err(|e| e.to_string())?;
             let list: Vec<Value> = events
                 .iter()
                 .map(|e| {
@@ -484,22 +449,21 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
                     })
                 })
                 .collect();
-            Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&list).unwrap_or_default() }] }))
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&list).unwrap_or_default() }] }),
+            )
         }
         "rotate_dsn" => {
-            let slug =
-                args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
-            let project = store
-                .get_project_by_slug(slug)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("project not found")?;
+            let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
+            let project =
+                store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
             let new_key = store.rotate_dsn(&project.id).await.map_err(|e| e.to_string())?;
-            Ok(json!({ "content": [{ "type": "text", "text": format!("DSN rotated for {}. New key: {}...{}", slug, &new_key[..8], &new_key[new_key.len()-4..]) }] }))
+            Ok(
+                json!({ "content": [{ "type": "text", "text": format!("DSN rotated for {}. New key: {}...{}", slug, &new_key[..8], &new_key[new_key.len()-4..]) }] }),
+            )
         }
         "healthcheck" => {
-            let ok: i64 =
-                sqlx::query_scalar("SELECT 1").fetch_one(pool).await.map_err(|e| e.to_string())?;
+            let ok: i64 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await.map_err(|e| e.to_string())?;
             Ok(json!({ "content": [{ "type": "text", "text": format!("Healthy (db={})", ok) }] }))
         }
         _ => Err(format!("Unknown tool: {name}")),

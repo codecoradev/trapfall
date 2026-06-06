@@ -1,11 +1,11 @@
 //! HTTP server — Axum router, ingest handler, health check, API routes.
 
 use axum::{
-    Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, post},
+    Router,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -67,9 +67,7 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn list_projects(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
+async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
     let store = Store::new(state.pool);
     let projects = store.list_projects().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(projects))
@@ -80,8 +78,7 @@ async fn get_project(
     Path(slug): Path<String>,
 ) -> Result<Json<trapfall_proto::Project>, StatusCode> {
     let store = Store::new(state.pool);
-    let project =
-        store.get_project_by_slug(&slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project = store.get_project_by_slug(&slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     match project {
         Some(p) => Ok(Json(p)),
         None => Err(StatusCode::NOT_FOUND),
@@ -182,10 +179,7 @@ async fn list_issues(
     let offset = ((query.page - 1) * query.per_page) as i64;
     let limit = query.per_page as i64;
 
-    let issues = store
-        .list_issues(&project.id, limit, offset)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let issues = store.list_issues(&project.id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Total count approximation — use issues.len() for now
     let total = issues.len() as i64;
@@ -240,10 +234,7 @@ async fn list_events(
     let offset = ((query.page - 1) * query.per_page) as i64;
     let limit = query.per_page as i64;
 
-    let events = store
-        .list_events(&issue_id, limit, offset)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let events = store.list_events(&issue_id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let total = events.len() as i64;
 
@@ -263,8 +254,7 @@ async fn list_alert_rules(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let rules =
-        store.list_alert_rules(&project.id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rules = store.list_alert_rules(&project.id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rules))
 }
 
@@ -311,10 +301,7 @@ async fn get_alert_rule(
         .map(Json)
 }
 
-async fn delete_alert_rule(
-    State(state): State<AppState>,
-    Path(rule_id): Path<String>,
-) -> StatusCode {
+async fn delete_alert_rule(State(state): State<AppState>, Path(rule_id): Path<String>) -> StatusCode {
     let store = Store::new(state.pool);
     match store.delete_alert_rule(&rule_id).await {
         Ok(true) => StatusCode::OK,
