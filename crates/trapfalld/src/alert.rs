@@ -8,8 +8,8 @@ use trapfall_proto::{AlertRule, Issue};
 use trapfall_core::Store;
 
 /// Shared HTTP client for webhook dispatch — connection pooling.
-static REQWEST_CLIENT: std::sync::LazyLock<reqwest::Client> =
-    std::sync::LazyLock::new(|| reqwest::Client::builder().pool_max_idle_per_host(4).build().unwrap_or_default());
+static REQWEST_CLIENT: LazyLock<reqwest::Client> =
+    LazyLock::new(|| reqwest::Client::builder().pool_max_idle_per_host(4).build().unwrap_or_default());
 
 /// Spawn the alert engine background task.
 pub fn spawn_alert_engine(pool: SqlitePool, _buffer: usize) -> mpsc::UnboundedSender<Issue> {
