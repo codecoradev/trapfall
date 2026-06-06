@@ -50,6 +50,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
         .route("/api/0/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
         .route("/api/0/rules/{rule_id}/toggle", post(toggle_alert_rule))
+        // ── Search API ────────────────────────────────────────────────
+        .route("/api/0/projects/{slug}/search", get(search_issues))
         .route("/api/0/ws", get(crate::ws::ws_handler))
         .merge(auth_routes)
         .merge(protected_routes)
@@ -335,5 +337,46 @@ async fn toggle_alert_rule(
     match store.toggle_alert_rule(&rule_id, req.enabled).await {
         Ok(()) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+// ── Search Handler ─────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    status: Option<String>,
+    level: Option<String>,
+    limit: Option<i64>,
+    page: Option<i64>,
+}
+
+async fn search_issues(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<SearchQuery>,
+) -> impl IntoResponse {
+    let store = Store::new(state.pool.clone());
+    let project = match store.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let limit = query.limit.unwrap_or(50).min(100);
+    let offset = query.page.unwrap_or(0) * limit;
+
+    match trapfall_search::search_issues(
+        &state.pool,
+        &query.q,
+        Some(&project.id),
+        query.status.as_deref(),
+        query.level.as_deref(),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(issues) => Json(ListResponse { data: issues, total: 0, page: 0, per_page: limit }).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

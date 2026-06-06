@@ -1,0 +1,9 @@
+target/
+web/node_modules/
+web/.svelte-kit/
+.git/
+*.md
+!README.md
+.env
+.env.*
+.cora.yaml
