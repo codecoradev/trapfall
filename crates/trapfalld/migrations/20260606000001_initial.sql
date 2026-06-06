@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY NOT NULL,
     slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    dsn_key TEXT NOT NULL,
     dsn TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

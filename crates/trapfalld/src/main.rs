@@ -9,17 +9,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
-mod config;
-mod digest;
-mod metrics;
-mod rate_limit;
-mod retention;
-mod server;
-mod spa;
-
-use config::Config;
-use digest::DigestTask;
-use server::AppState;
+use trapfalld::{AppState, Config, DigestTask};
 
 #[derive(Parser, Debug)]
 #[command(name = "trapfall", version, about = "TrapFall error capture daemon")]
@@ -73,7 +63,7 @@ async fn main() -> Result<()> {
     // Start retention task
     let retention_pool = pool.clone();
     let retention_handle = tokio::spawn(async move {
-        retention::run_retention(retention_pool, None).await;
+        trapfalld::retention::run_retention(retention_pool, None).await;
     });
 
     // Build app state
@@ -81,13 +71,13 @@ async fn main() -> Result<()> {
         pool: pool.clone(),
         config,
         ingest_tx,
-        rate_limiter: rate_limit::RateLimiter::default(),
+        rate_limiter: trapfalld::rate_limit::RateLimiter::default(),
     };
 
     // Start HTTP server
     let listener = tokio::net::TcpListener::bind(&cli.listen).await?;
     info!("Listening on {}", cli.listen);
-    axum::serve(listener, server::router(state)).await?;
+    axum::serve(listener, trapfalld::server::router(state)).await?;
 
     digest_handle.abort();
     retention_handle.abort();
