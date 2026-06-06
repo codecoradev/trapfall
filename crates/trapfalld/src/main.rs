@@ -11,9 +11,11 @@ use tracing::info;
 
 mod config;
 mod digest;
+mod metrics;
 mod rate_limit;
 mod retention;
 mod server;
+mod spa;
 
 use config::Config;
 use digest::DigestTask;
