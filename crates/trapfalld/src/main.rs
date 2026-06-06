@@ -11,6 +11,8 @@ use tracing::info;
 
 mod config;
 mod digest;
+mod rate_limit;
+mod retention;
 mod server;
 
 use config::Config;
@@ -66,8 +68,19 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Start retention task
+    let retention_pool = pool.clone();
+    let retention_handle = tokio::spawn(async move {
+        retention::run_retention(retention_pool, None).await;
+    });
+
     // Build app state
-    let state = AppState { pool: pool.clone(), config, ingest_tx };
+    let state = AppState {
+        pool: pool.clone(),
+        config,
+        ingest_tx,
+        rate_limiter: rate_limit::RateLimiter::default(),
+    };
 
     // Start HTTP server
     let listener = tokio::net::TcpListener::bind(&cli.listen).await?;
@@ -75,5 +88,6 @@ async fn main() -> Result<()> {
     axum::serve(listener, server::router(state)).await?;
 
     digest_handle.abort();
+    retention_handle.abort();
     Ok(())
 }

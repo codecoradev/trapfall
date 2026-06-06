@@ -24,6 +24,7 @@ pub struct AppState {
     #[allow(dead_code)]
     pub config: Config,
     pub ingest_tx: mpsc::Sender<IngestEvent>,
+    pub rate_limiter: crate::rate_limit::RateLimiter,
 }
 
 /// Build the Axum router.
@@ -71,6 +72,10 @@ async fn ingest_envelope(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> StatusCode {
+    // Rate limit check
+    if !state.rate_limiter.try_consume(&project_id, 1.0) {
+        return StatusCode::TOO_MANY_REQUESTS;
+    }
     // Extract content encoding
     let encoding = headers.get("content-encoding").and_then(|v| v.to_str().ok());
 
