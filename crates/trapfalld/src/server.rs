@@ -31,9 +31,11 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(crate::metrics::metrics))
         .route("/api/0/projects", get(list_projects))
         .route("/api/0/projects/{slug}", get(get_project))
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
+        .fallback(crate::spa::spa_handler)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

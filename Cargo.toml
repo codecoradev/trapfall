@@ -45,6 +45,9 @@ blake3 = "1"
 # Compression
 flate2 = "1"
 
+# Embed
+mime_guess = "2"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
