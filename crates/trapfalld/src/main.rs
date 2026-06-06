@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use trapfalld::{AppState, Config, DigestTask, WsHub};
+use trapfalld::{AppState, Config, DigestTask, WsHub, spawn_alert_engine};
 
 #[derive(Parser, Debug)]
 #[command(name = "trapfall", version, about = "TrapFall error capture daemon")]
@@ -57,8 +57,13 @@ async fn main() -> Result<()> {
     let (ws_broadcast_tx, mut ws_broadcast_rx) =
         mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
 
-    // Start digest task with WS notifications
-    let digest = DigestTask::new(pool.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx);
+    // Alert engine — evaluates rules against issues
+    let alert_tx = spawn_alert_engine(pool.clone(), 256);
+
+    // Start digest task with WS + alert notifications
+    let digest = DigestTask::new(pool.clone(), ingest_rx)
+        .with_ws_sender(ws_broadcast_tx)
+        .with_alert_sender(alert_tx);
     let digest_handle = tokio::spawn(async move {
         if let Err(e) = digest.run().await {
             tracing::error!("Digest task failed: {e}");

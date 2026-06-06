@@ -33,6 +33,7 @@ mime_guess = { workspace = true }
 uuid = { workspace = true }
 tower = { workspace = true }
 http-body-util = "0.1"
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }

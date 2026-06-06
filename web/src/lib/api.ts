@@ -187,4 +187,60 @@ export class ApiClientError extends Error {
 	}
 }
 
+// ── Alert Rules ────────────────────────────────────────────────────────
+
+export interface AlertRule {
+	id: string;
+	project_id: string;
+	name: string;
+	enabled: boolean;
+	conditions: Record<string, unknown>;
+	action_type: string;
+	action_config: Record<string, unknown>;
+	cooldown_seconds: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreateAlertRule {
+	name: string;
+	conditions: Record<string, unknown>;
+	action_type?: string;
+	action_config?: Record<string, unknown>;
+	cooldown_seconds?: number;
+}
+
+export async function listAlertRules(projectSlug: string): Promise<AlertRule[]> {
+	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`);
+	if (!res.ok) throw new ApiClientError(res.status, await res.text());
+	return res.json();
+}
+
+export async function createAlertRule(
+	projectSlug: string,
+	rule: CreateAlertRule
+): Promise<AlertRule> {
+	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(rule)
+	});
+	if (!res.ok) throw new ApiClientError(res.status, await res.text());
+	return res.json();
+}
+
+export async function deleteAlertRule(ruleId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/rules/${ruleId}`, { method: 'DELETE' });
+	if (!res.ok && res.status !== 200) throw new ApiClientError(res.status, await res.text());
+}
+
+export async function toggleAlertRule(ruleId: string, enabled: boolean): Promise<void> {
+	const res = await fetch(`${API_BASE}/rules/${ruleId}/toggle`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ enabled })
+	});
+	if (!res.ok) throw new ApiClientError(res.status, await res.text());
+}
+
 export const api = new ApiClient();
