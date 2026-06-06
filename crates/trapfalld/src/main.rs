@@ -83,8 +83,8 @@ async fn main() -> Result<()> {
             if projects.is_empty() {
                 println!("No projects found.");
             } else {
-                #[allow(clippy::print_literal)]
-                println!("{:<36} {:<20} {:<10} {}", "ID", "SLUG", "NAME", "DSN");
+                let header = format!("{:<36} {:<20} {:<10} {}", "ID", "SLUG", "NAME", "DSN");
+                println!("{header}");
                 for p in &projects {
                     println!("{} {:<20} {:<10} {}...{}", p.id, p.slug, p.name, &p.dsn[..8], &p.dsn[p.dsn.len() - 4..]);
                 }
