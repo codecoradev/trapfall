@@ -85,14 +85,7 @@ async fn main() -> Result<()> {
             } else {
                 println!("{:<36} {:<20} {:<10} {}", "ID", "SLUG", "NAME", "DSN");
                 for p in &projects {
-                    println!(
-                        "{} {:<20} {:<10} {}...{}",
-                        p.id,
-                        p.slug,
-                        p.name,
-                        &p.dsn_public[..8],
-                        &p.dsn_public[p.dsn_public.len() - 4..]
-                    );
+                    println!("{} {:<20} {:<10} {}...{}", p.id, p.slug, p.name, &p.dsn[..8], &p.dsn[p.dsn.len() - 4..]);
                 }
             }
             Ok(())
@@ -102,7 +95,7 @@ async fn main() -> Result<()> {
             let slug = slug.unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
             let project = store.create_project(&slug, &name).await?;
             println!("Project created: {} ({})", project.name, project.slug);
-            println!("DSN: {}", project.dsn_public);
+            println!("DSN: {}", project.dsn);
             Ok(())
         }
         Commands::ProjectRotateDsn { slug } => {
