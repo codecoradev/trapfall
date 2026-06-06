@@ -4,8 +4,6 @@
 //! after digest processing, checks them against enabled alert rules, and fires
 //! webhook POSTs (best-effort).
 
-use std::sync::Arc;
-
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use trapfall_proto::{AlertRule, Issue};
@@ -13,7 +11,7 @@ use trapfall_proto::{AlertRule, Issue};
 use trapfall_core::Store;
 
 /// Spawn the alert engine background task. Returns the sender for injecting issues.
-pub fn spawn_alert_engine(pool: SqlitePool, buffer: usize) -> mpsc::UnboundedSender<Issue> {
+pub fn spawn_alert_engine(pool: SqlitePool, _buffer: usize) -> mpsc::UnboundedSender<Issue> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Issue>();
 
     tokio::spawn(async move {
