@@ -34,6 +34,9 @@
 				<a href="/projects" class="hover:text-foreground text-muted-foreground transition-colors">
 					Projects
 				</a>
+				<a href="/settings" class="hover:text-foreground text-muted-foreground transition-colors">
+					Settings
+				</a>
 			</nav>
 			<div class="ml-auto flex items-center gap-3">
 				{#if auth.user}
