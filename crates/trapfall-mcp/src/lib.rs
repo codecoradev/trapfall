@@ -10,10 +10,37 @@ use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 use trapfall_proto::IssueStatus;
 
-use trapfall_core::Store;
+/// Process a single JSON-RPC message and return the response string.
+/// Used by both the stdin server loop and integration tests.
+pub async fn handle_message(input: &str, pool: &SqlitePool, store: &trapfall_core::Store) -> String {
+    let msg: Value = match serde_json::from_str(input.trim()) {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::to_string(&json!({
+                "jsonrpc": "2.0",
+                "error": {"code": -32700, "message": format!("Parse error: {e}")},
+                "id": null
+            }))
+            .unwrap();
+        }
+    };
+
+    let id = msg.get("id").cloned();
+    let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let params = msg.get("params").cloned().unwrap_or(json!({}));
+
+    let result = handle_request(method, params, pool, store).await;
+
+    match result {
+        Ok(val) => json!({ "jsonrpc": "2.0", "result": val, "id": id }),
+        Err(code_msg) => json!({ "jsonrpc": "2.0", "error": {"code": -32603, "message": code_msg}, "id": id }),
+    }
+    .to_string()
+}
 
 /// Run the MCP server, reading JSON-RPC from stdin and writing to stdout.
 pub async fn run_server(pool: SqlitePool) -> Result<()> {
+    let store = trapfall_core::Store::new(pool.clone());
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
@@ -28,39 +55,7 @@ pub async fn run_server(pool: SqlitePool) -> Result<()> {
             Err(_) => break,
         }
 
-        let msg: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(e) => {
-                let resp = json!({
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": format!("Parse error: {e}")},
-                    "id": null
-                });
-                writeln!(stdout, "{}", resp)?;
-                stdout.flush()?;
-                continue;
-            }
-        };
-
-        let id = msg.get("id").cloned();
-        let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        let params = msg.get("params").cloned().unwrap_or(json!({}));
-
-        let result = handle_request(method, params, &pool).await;
-
-        let response = match result {
-            Ok(val) => json!({
-                "jsonrpc": "2.0",
-                "result": val,
-                "id": id
-            }),
-            Err(code_msg) => json!({
-                "jsonrpc": "2.0",
-                "error": {"code": -32603, "message": code_msg},
-                "id": id
-            }),
-        };
-
+        let response = handle_message(&line, &pool, &store).await;
         writeln!(stdout, "{}", response)?;
         stdout.flush()?;
     }
@@ -68,7 +63,12 @@ pub async fn run_server(pool: SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(method: &str, params: Value, pool: &SqlitePool) -> Result<Value, String> {
+async fn handle_request(
+    method: &str,
+    params: Value,
+    pool: &SqlitePool,
+    store: &trapfall_core::Store,
+) -> Result<Value, String> {
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": "2024-11-05",
@@ -80,7 +80,7 @@ async fn handle_request(method: &str, params: Value, pool: &SqlitePool) -> Resul
         "tools/call" => {
             let tool_name = params.get("name").and_then(|n| n.as_str()).ok_or("missing tool name")?;
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            call_tool(tool_name, args, pool).await
+            call_tool(tool_name, args, pool, store).await
         }
         "ping" => Ok(json!({})),
         _ => Err(format!("Unknown method: {method}")),
@@ -219,62 +219,37 @@ fn tools_list() -> Vec<Value> {
     ]
 }
 
-async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, String> {
-    let store = Store::new(pool.clone());
-
+async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_core::Store) -> Result<Value, String> {
     match name {
         "list_issues" => {
             let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
             let project =
                 store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
 
-            let mut query = "SELECT id, project_id, fingerprint, title, culprit, status, level, \
-                 count, user_count, first_seen, last_seen FROM issues WHERE project_id = ?"
-                .to_string();
-            let mut bindings: Vec<String> = vec![project.id];
-
-            if let Some(status) = args.get("status").and_then(|v| v.as_str()) {
-                query.push_str(" AND status = ?");
-                bindings.push(status.to_string());
-            }
-            if let Some(level) = args.get("level").and_then(|v| v.as_str()) {
-                query.push_str(" AND level = ?");
-                bindings.push(level.to_string());
-            }
-
+            let status = args.get("status").and_then(|v| v.as_str());
+            let level = args.get("level").and_then(|v| v.as_str());
             let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
-            query.push_str(" ORDER BY last_seen DESC LIMIT ?");
-            bindings.push(limit.to_string());
 
-            let mut q = sqlx::query(&query);
-            for b in &bindings {
-                q = q.bind(b);
-            }
-            let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let issues =
+                store.list_issues_filtered(&project.id, status, level, limit, 0).await.map_err(|e| e.to_string())?;
 
-            let mut issues = Vec::new();
-            for row in rows {
-                let title: String = row.try_get("title").map_err(|e| e.to_string())?;
-                let id: String = row.try_get("id").map_err(|e| e.to_string())?;
-                let status: String = row.try_get("status").map_err(|e| e.to_string())?;
-                let level: String = row.try_get("level").map_err(|e| e.to_string())?;
-                let count: i64 = row.try_get("count").map_err(|e| e.to_string())?;
-                let last_seen: String = row.try_get("last_seen").map_err(|e| e.to_string())?;
-                let culprit: Option<String> = row.try_get("culprit").map_err(|e| e.to_string())?;
-
-                issues.push(json!({
-                    "id": id,
-                    "title": title,
-                    "status": status,
-                    "level": level,
-                    "count": count,
-                    "culprit": culprit,
-                    "last_seen": last_seen,
-                }));
-            }
+            let result: Vec<serde_json::Value> = issues
+                .iter()
+                .map(|i| {
+                    json!({
+                        "id": i.id,
+                        "title": i.title,
+                        "status": i.status,
+                        "level": i.level,
+                        "count": i.count,
+                        "culprit": i.culprit,
+                        "last_seen": i.last_seen,
+                    })
+                })
+                .collect();
 
             Ok(
-                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&issues).unwrap_or_default() }] }),
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_default() }] }),
             )
         }
         "get_issue" => {

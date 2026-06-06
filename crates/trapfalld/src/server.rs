@@ -350,7 +350,10 @@ async fn search_issues(
     };
 
     let limit = query.limit.unwrap_or(50).min(100);
-    let offset = query.page.unwrap_or(0) * limit;
+    let page = query.page.unwrap_or(0);
+    let offset = page * limit;
+
+    let total = store.count_issues(&project.id, query.status.as_deref(), query.level.as_deref()).await.unwrap_or(0);
 
     match trapfall_search::search_issues(
         &state.pool,
@@ -363,7 +366,9 @@ async fn search_issues(
     )
     .await
     {
-        Ok(issues) => Json(ListResponse { data: issues, total: 0, page: 0, per_page: limit as u32 }).into_response(),
+        Ok(issues) => {
+            Json(ListResponse { data: issues, total, page: page as u32, per_page: limit as u32 }).into_response()
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

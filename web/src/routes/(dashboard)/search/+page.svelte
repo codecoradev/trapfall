@@ -1,13 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type Issue } from '$lib/api';
+	import { api, type Issue, type Project } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 
 	type BadgeVariant = 'destructive' | 'secondary' | 'outline' | 'default';
 
+	let projects = $state<Project[]>([]);
+	let selectedSlug = $state('');
 	let query = $state('');
 	let results = $state<Issue[]>([]);
+	let total = $state(0);
+	let page = $state(0);
 	let loading = $state(false);
 	let searched = $state(false);
 	let statusFilter = $state('');
@@ -15,147 +19,146 @@
 
 	let debounceTimer: ReturnType<typeof setTimeout>;
 
+	onMount(async () => {
+		try {
+			projects = await api.get<Project[]>('/api/0/projects');
+			if (projects.length > 0) {
+				selectedSlug = projects[0].slug;
+			}
+		} catch {
+			projects = [];
+		}
+	});
+
 	function doSearch() {
-		if (!query.trim()) return;
+		if (!query.trim() || !selectedSlug) return;
 		loading = true;
 		searched = true;
 
 		const params = new URLSearchParams();
 		params.set('q', query);
 		params.set('limit', '50');
+		params.set('page', String(page));
 		if (statusFilter) params.set('status', statusFilter);
 		if (levelFilter) params.set('level', levelFilter);
 
 		api
-			.get<{ data: Issue[] }>(`/api/0/projects/default/search?${params}`)
+			.get<{ data: Issue[]; total: number }>(`/api/0/projects/${selectedSlug}/search?${params}`)
 			.then((data) => {
 				results = data.data ?? [];
+				total = data.total ?? 0;
 			})
 			.catch(() => {
 				results = [];
+				total = 0;
 			})
 			.finally(() => {
 				loading = false;
 			});
 	}
 
-	function onInput() {
+	function debouncedSearch() {
 		clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(doSearch, 300);
 	}
 
 	function levelColor(level: string): BadgeVariant {
-		const colors: Record<string, BadgeVariant> = {
+		const map: Record<string, BadgeVariant> = {
 			fatal: 'destructive',
 			error: 'destructive',
 			warning: 'secondary',
 			info: 'outline',
 			debug: 'outline'
 		};
-		return colors[level] ?? 'outline';
+		return map[level] ?? 'outline';
 	}
 
-	function statusVariant(status: string): BadgeVariant {
-		if (status === 'resolved') return 'outline';
-		if (status === 'ignored') return 'secondary';
-		return 'default';
+	function statusColor(status: string): BadgeVariant {
+		const map: Record<string, BadgeVariant> = {
+			unresolved: 'destructive',
+			resolved: 'outline',
+			ignored: 'secondary'
+		};
+		return map[status] ?? 'default';
 	}
 
-	function highlight(text: string, q: string): string {
-		if (!q) return text;
-		const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		return text.replace(new RegExp(`(${escaped})`, 'gi'), '<mark>$1</mark>');
+	function formatTime(iso: string): string {
+		if (!iso) return '';
+		const d = new Date(iso);
+		return d.toLocaleString();
 	}
 </script>
 
-<svelte:head>
-	<title>Search — TrapFall</title>
-</svelte:head>
-
 <div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Search</h1>
+	<div>
+		<h1 class="text-2xl font-bold">Search Issues</h1>
+		<p class="text-muted-foreground">Search across all issues in a project</p>
 	</div>
 
-	<div class="flex items-center gap-3">
-		<div class="relative flex-1">
-			<svg
-				class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-			>
-				<circle cx="11" cy="11" r="8" />
-				<path d="m21 21-4.3-4.3" />
-			</svg>
+	<!-- Project selector + search bar -->
+	<div class="flex gap-3">
+		<select
+			bind:value={selectedSlug}
+			class="rounded-md border bg-background px-3 py-2 text-sm"
+		>
+			<option value="" disabled>Select project</option>
+			{#each projects as p}
+				<option value={p.slug}>{p.name} ({p.slug})</option>
+			{/each}
+		</select>
+
+		<div class="flex-1">
 			<input
 				type="text"
-				placeholder="Search errors by title or culprit..."
 				bind:value={query}
-				oninput={onInput}
-				class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pl-10 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				oninput={debouncedSearch}
+				onkeydown={(e) => e.key === 'Enter' && doSearch()}
+				placeholder="Search by title or culprit..."
+				class="w-full rounded-md border bg-background px-3 py-2 text-sm"
 			/>
 		</div>
+	</div>
 
-		<select
-			bind:value={statusFilter}
-			onchange={doSearch}
-			class="h-10 rounded-md border border-input bg-background px-3 text-sm"
-		>
-			<option value="">All Status</option>
+	<!-- Filters -->
+	<div class="flex gap-3">
+		<select bind:value={statusFilter} onchange={doSearch} class="rounded-md border bg-background px-3 py-2 text-sm">
+			<option value="">All statuses</option>
 			<option value="unresolved">Unresolved</option>
 			<option value="resolved">Resolved</option>
 			<option value="ignored">Ignored</option>
 		</select>
-
-		<select
-			bind:value={levelFilter}
-			onchange={doSearch}
-			class="h-10 rounded-md border border-input bg-background px-3 text-sm"
-		>
-			<option value="">All Levels</option>
+		<select bind:value={levelFilter} onchange={doSearch} class="rounded-md border bg-background px-3 py-2 text-sm">
+			<option value="">All levels</option>
 			<option value="fatal">Fatal</option>
 			<option value="error">Error</option>
 			<option value="warning">Warning</option>
 			<option value="info">Info</option>
+			<option value="debug">Debug</option>
 		</select>
 	</div>
 
+	<!-- Results -->
 	{#if loading}
-		<div class="text-center text-muted-foreground py-12">Searching...</div>
+		<p class="text-muted-foreground">Searching...</p>
 	{:else if searched && results.length === 0}
-		<div class="text-center text-muted-foreground py-12">
-			No results found for "{query}"
-		</div>
+		<p class="text-muted-foreground">No results found.</p>
 	{:else if results.length > 0}
+		<div class="text-sm text-muted-foreground mb-2">{total} result{total !== 1 ? 's' : ''} found</div>
 		<div class="space-y-2">
-			{#each results as issue (issue.id)}
+			{#each results as issue}
 				<a
 					href="/issues/{issue.id}"
-					class="block rounded-lg border p-4 hover:bg-accent/50 transition-colors"
+					class="block rounded-lg border p-4 hover:bg-accent transition-colors"
 				>
-					<div class="flex items-start justify-between gap-4">
-						<div class="flex-1 min-w-0">
-							<p class="font-medium truncate">
-								{@html highlight(issue.title, query)}
-							</p>
-							{#if issue.culprit}
-								<p class="text-sm text-muted-foreground truncate mt-1">
-									{@html highlight(issue.culprit, query)}
-								</p>
-							{/if}
-						</div>
-						<div class="flex items-center gap-2 shrink-0">
+					<div class="flex items-center justify-between gap-2">
+						<span class="font-medium truncate">{issue.title}</span>
+						<div class="flex gap-1 shrink-0">
+							<Badge variant={statusColor(issue.status)}>{issue.status}</Badge>
 							<Badge variant={levelColor(issue.level)}>{issue.level}</Badge>
-							<Badge variant={statusVariant(issue.status)}>
-								{issue.status}
-							</Badge>
-							<span class="text-xs text-muted-foreground whitespace-nowrap">
-								×{issue.count}
-							</span>
 						</div>
+					</div>
+					<div class="text-sm text-muted-foreground mt-1">
+						{issue.culprit ?? 'Unknown'} · {issue.count} events · Last seen {formatTime(issue.last_seen)}
 					</div>
 				</a>
 			{/each}

@@ -7,10 +7,10 @@ description = "Search module — LIKE + trigram substring matching"
 
 [dependencies]
 trapfall_proto = { workspace = true }
-trapfall_core = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-tracing = { workspace = true }
-thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

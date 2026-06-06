@@ -180,6 +180,61 @@ impl Store {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    /// List issues with optional status and level filters (parameterized — no SQL injection risk).
+    pub async fn list_issues_filtered(
+        &self,
+        project_id: &str,
+        status: Option<&str>,
+        level: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Issue>> {
+        let mut sql = String::from(
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, \
+             count, user_count, first_seen, last_seen FROM issues WHERE project_id = ?",
+        );
+        if status.is_some() {
+            sql.push_str(" AND status = ?");
+        }
+        if level.is_some() {
+            sql.push_str(" AND level = ?");
+        }
+        sql.push_str(" ORDER BY last_seen DESC LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query_as::<_, IssueRow>(&sql).bind(project_id);
+        if let Some(s) = status {
+            q = q.bind(s);
+        }
+        if let Some(l) = level {
+            q = q.bind(l);
+        }
+        q = q.bind(limit).bind(offset);
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Count issues for a project with optional filters.
+    pub async fn count_issues(&self, project_id: &str, status: Option<&str>, level: Option<&str>) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM issues WHERE project_id = ?");
+        if status.is_some() {
+            sql.push_str(" AND status = ?");
+        }
+        if level.is_some() {
+            sql.push_str(" AND level = ?");
+        }
+
+        let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(project_id);
+        if let Some(s) = status {
+            q = q.bind(s);
+        }
+        if let Some(l) = level {
+            q = q.bind(l);
+        }
+        let count = q.fetch_one(&self.pool).await?;
+        Ok(count)
+    }
+
     pub async fn set_issue_status(&self, issue_id: &str, status: IssueStatus) -> Result<()> {
         let status_str = status_to_str(status);
         sqlx::query("UPDATE issues SET status = ? WHERE id = ?")
