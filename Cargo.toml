@@ -1,0 +1,82 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/trapfall-proto",
+    "crates/trapfall-core",
+    "crates/trapfall-ingest",
+    "crates/trapfall-search",
+    "crates/trapfall-alert",
+    "crates/trapfall-mcp",
+    "crates/trapfall-dashboard",
+    "crates/trapfalld",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/codecoradev/trapfall"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# HTTP client (minimal, no reqwest)
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = "0.1"
+http-body-util = "0.1"
+
+# Crypto
+blake3 = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# MCP
+serde_jsonrpc = "0.2"
+
+# Errors
+thiserror = "2"
+anyhow = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Embedded SPA
+rust-embed = "8"
+
+# Internal crates
+trapfall-proto = { path = "crates/trapfall-proto" }
+trapfall-core = { path = "crates/trapfall-core" }
+trapfall-ingest = { path = "crates/trapfall-ingest" }
+trapfall-search = { path = "crates/trapfall-search" }
+trapfall-alert = { path = "crates/trapfall-alert" }
+trapfall-mcp = { path = "crates/trapfall-mcp" }
+trapfall-dashboard = { path = "crates/trapfall-dashboard" }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+panic = "abort"
+strip = true
+codegen-units = 1

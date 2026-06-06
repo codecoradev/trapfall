@@ -1,0 +1,14 @@
+[package]
+name = "trapfall_search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Search module — LIKE + trigram substring matching"
+
+[dependencies]
+trapfall-proto = { workspace = true }
+trapfall-core = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
