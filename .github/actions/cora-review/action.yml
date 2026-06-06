@@ -1,0 +1,32 @@
+name: 'Cora AI Code Review'
+description: 'Run Cora AI code review on PR diff'
+
+inputs:
+  cora-api-key:
+    description: 'Cora API key'
+    required: true
+  cora-base-url:
+    description: 'Cora API base URL'
+    required: true
+  base-branch:
+    description: 'Base branch to compare against'
+    required: false
+    default: 'develop'
+  format:
+    description: 'Output format (compact, json, sarif)'
+    required: false
+    default: 'compact'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install cora
+      shell: bash
+      run: curl -fsSL https://raw.githubusercontent.com/codecoradev/cora-cli/main/install.sh | sh
+
+    - name: Run cora review
+      shell: bash
+      env:
+        CORA_API_KEY: ${{ inputs.cora-api-key }}
+        CORA_BASE_URL: ${{ inputs.cora-base-url }}
+      run: cora review --base ${{ inputs.base-branch }} --format ${{ inputs.format }}

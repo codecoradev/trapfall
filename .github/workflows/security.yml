@@ -1,0 +1,63 @@
+name: Security
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 06:00 UTC
+
+jobs:
+  cargo-audit:
+    name: Cargo Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.86"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit@0.22.1 --locked
+      - name: Run cargo audit
+        run: cargo audit --ignore RUSTSEC-2023-0071
+
+  npm-audit:
+    name: npm Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=moderate
+
+  trivy-fs:
+    name: Trivy Filesystem
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  trivy-secrets:
+    name: Trivy Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy secret scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'secret'
+          exit-code: '1'

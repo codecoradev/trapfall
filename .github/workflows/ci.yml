@@ -78,11 +78,9 @@ jobs:
           fetch-depth: 0
       - name: Fetch base branch
         run: git fetch origin develop:develop
-      - name: Install cora
-        run: curl -fsSL https://raw.githubusercontent.com/codecoradev/cora-cli/main/install.sh | sh
-      - name: Run cora review
-        env:
-          CORA_API_KEY: ${{ secrets.CORA_API_KEY }}
-          CORA_BASE_URL: ${{ secrets.CORA_BASE_URL }}
-        run: |
-          cora review --base develop --format compact
+      - uses: ./.github/actions/cora-review
+        with:
+          cora-api-key: ${{ secrets.CORA_API_KEY }}
+          cora-base-url: ${{ secrets.CORA_BASE_URL }}
+          base-branch: develop
+          format: compact
