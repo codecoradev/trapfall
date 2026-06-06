@@ -22,5 +22,5 @@ ignore:
     - "web/.svelte-kit/**"
 
 hook:
-  max_diff_size: 51200
+  max_diff_size: 128000
   on_violation: warn

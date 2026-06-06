@@ -98,8 +98,8 @@ pub async fn search_issues(
             status: serde_json::from_value(serde_json::Value::String(status_str))
                 .unwrap_or(trapfall_proto::IssueStatus::Unresolved),
             level: serde_json::from_value(serde_json::Value::String(level_str)).unwrap_or(Level::Error),
-            count: count as i64,
-            user_count: user_count as i64,
+            count,
+            user_count,
             first_seen,
             last_seen,
         });
