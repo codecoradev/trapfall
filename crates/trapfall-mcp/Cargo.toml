@@ -16,4 +16,5 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true }
 tokio = { workspace = true }

@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use sqlx::SqlitePool;
 
 /// Helper: build a JSON-RPC request.
 fn rpc_request(method: &str, params: Value) -> Value {
