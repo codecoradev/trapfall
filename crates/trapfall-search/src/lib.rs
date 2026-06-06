@@ -39,19 +39,9 @@ pub async fn search_issues(
         param_idx += 1;
     }
 
-    sql.push_str(" ORDER BY last_seen DESC LIMIT ?{param_idx} OFFSET ?");
-    // manually numbered — fix below with dynamic building
+    sql.push_str(" ORDER BY last_seen DESC LIMIT ? OFFSET ?");
 
-    // Simpler approach: build with positional params
-    let mut q = sqlx::query_as::<_, IssueRow>(
-        "SELECT id, project_id, fingerprint, title, culprit, status, level, \
-         count, user_count, first_seen, last_seen \
-         FROM issues WHERE (title LIKE ? OR culprit LIKE ?)",
-    )
-    .bind(&pattern)
-    .bind(&pattern);
-
-    // Rebuild with dynamic filters
+    // Build with dynamic filters using raw query
     let sql_base = "SELECT id, project_id, fingerprint, title, culprit, status, level, \
          count, user_count, first_seen, last_seen FROM issues WHERE (title LIKE ? OR culprit LIKE ?)";
 
@@ -110,8 +100,8 @@ pub async fn search_issues(
                 .unwrap_or(trapfall_proto::IssueStatus::Unresolved),
             level: serde_json::from_value(serde_json::Value::String(level_str))
                 .unwrap_or(Level::Error),
-            count: count as u64,
-            user_count: user_count as u64,
+            count: count as i64,
+            user_count: user_count as i64,
             first_seen,
             last_seen,
         });
