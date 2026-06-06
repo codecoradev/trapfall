@@ -2,11 +2,12 @@
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::Json,
     routing::{get, post},
 };
+use serde::Deserialize;
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tower_http::cors::CorsLayer;
@@ -15,7 +16,7 @@ use tower_http::trace::TraceLayer;
 use crate::config::Config;
 use trapfall_core::Store;
 use trapfall_ingest::parse_envelope;
-use trapfall_proto::IngestEvent;
+use trapfall_proto::{IngestEvent, IssueStatus, ListResponse};
 
 /// Shared application state.
 #[derive(Clone)]
@@ -35,9 +36,15 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
+        // ── Public API (ingest) ──────────────────────────────────────
+        .route("/api/{project_id}/envelope/", post(ingest_envelope))
+        // ── Dashboard API (auth-protected) ───────────────────────────
         .route("/api/0/projects", get(list_projects))
         .route("/api/0/projects/{slug}", get(get_project))
-        .route("/api/{project_id}/envelope/", post(ingest_envelope))
+        .route("/api/0/projects/{slug}/issues", get(list_issues))
+        .route("/api/0/issues/{issue_id}", get(get_issue))
+        .route("/api/0/issues/{issue_id}/status", post(set_issue_status))
+        .route("/api/0/issues/{issue_id}/events", get(list_events))
         .merge(auth_routes)
         .merge(protected_routes)
         .fallback(crate::spa::spa_handler)
@@ -131,4 +138,106 @@ async fn ingest_envelope(
 
     tracing::trace!("Accepted {accepted} events for project {project_id}");
     StatusCode::OK
+}
+
+// ── Issue / Event Handlers ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ListIssuesQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_per_page")]
+    per_page: u32,
+}
+
+fn default_page() -> u32 {
+    1
+}
+fn default_per_page() -> u32 {
+    20
+}
+
+async fn list_issues(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<ListIssuesQuery>,
+) -> Result<Json<ListResponse<trapfall_proto::Issue>>, StatusCode> {
+    let store = Store::new(state.pool);
+
+    // Resolve project slug to ID
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let offset = ((query.page - 1) * query.per_page) as i64;
+    let limit = query.per_page as i64;
+
+    let issues = store
+        .list_issues(&project.id, limit, offset)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Total count approximation — use issues.len() for now
+    let total = issues.len() as i64;
+
+    Ok(Json(ListResponse { data: issues, total, page: query.page, per_page: query.per_page }))
+}
+
+async fn get_issue(
+    State(state): State<AppState>,
+    Path(issue_id): Path<String>,
+) -> Result<Json<trapfall_proto::Issue>, StatusCode> {
+    let store = Store::new(state.pool);
+    store
+        .get_issue(&issue_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)
+        .map(Json)
+}
+
+#[derive(Deserialize)]
+struct SetStatusRequest {
+    status: IssueStatus,
+}
+
+async fn set_issue_status(
+    State(state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Json(req): Json<SetStatusRequest>,
+) -> StatusCode {
+    let store = Store::new(state.pool);
+    match store.set_issue_status(&issue_id, req.status).await {
+        Ok(()) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[derive(Deserialize)]
+struct ListEventsQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_per_page")]
+    per_page: u32,
+}
+
+async fn list_events(
+    State(state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<ListEventsQuery>,
+) -> Result<Json<ListResponse<trapfall_proto::StoredEvent>>, StatusCode> {
+    let store = Store::new(state.pool);
+    let offset = ((query.page - 1) * query.per_page) as i64;
+    let limit = query.per_page as i64;
+
+    let events = store
+        .list_events(&issue_id, limit, offset)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let total = events.len() as i64;
+
+    Ok(Json(ListResponse { data: events, total, page: query.page, per_page: query.per_page }))
 }
