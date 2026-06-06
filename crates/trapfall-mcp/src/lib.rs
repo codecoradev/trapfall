@@ -228,10 +228,9 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
             let project =
                 store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or("project not found")?;
 
-            let mut query = format!(
-                "SELECT id, project_id, fingerprint, title, culprit, status, level, \
+            let mut query = "SELECT id, project_id, fingerprint, title, culprit, status, level, \
                  count, user_count, first_seen, last_seen FROM issues WHERE project_id = ?"
-            );
+                .to_string();
             let mut bindings: Vec<String> = vec![project.id];
 
             if let Some(status) = args.get("status").and_then(|v| v.as_str()) {
