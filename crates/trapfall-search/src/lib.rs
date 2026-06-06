@@ -18,29 +18,6 @@ pub async fn search_issues(
 ) -> anyhow::Result<Vec<Issue>> {
     let pattern = format!("%{query}%");
 
-    let mut sql = String::from(
-        "SELECT id, project_id, fingerprint, title, culprit, status, level, \
-         count, user_count, first_seen, last_seen \
-         FROM issues WHERE (title LIKE ?1 OR culprit LIKE ?1)",
-    );
-
-    let mut param_idx = 2u32;
-
-    if project_id.is_some() {
-        sql.push_str(&format!(" AND project_id = ?{param_idx}"));
-        param_idx += 1;
-    }
-    if status.is_some() {
-        sql.push_str(&format!(" AND status = ?{param_idx}"));
-        param_idx += 1;
-    }
-    if level.is_some() {
-        sql.push_str(&format!(" AND level = ?{param_idx}"));
-        param_idx += 1;
-    }
-
-    sql.push_str(" ORDER BY last_seen DESC LIMIT ? OFFSET ?");
-
     // Build with dynamic filters using raw query
     let sql_base = "SELECT id, project_id, fingerprint, title, culprit, status, level, \
          count, user_count, first_seen, last_seen FROM issues WHERE (title LIKE ? OR culprit LIKE ?)";
