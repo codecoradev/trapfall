@@ -1,0 +1,23 @@
+# Cora CLI — AI code review configuration
+# https://github.com/codecoradev/cora-cli
+
+provider:
+  provider: openai
+  model: glm-5.1
+  base_url: http://localhost:4000
+
+ignore:
+  files:
+    - "**/CHANGELOG.md"
+    - "**/package-lock.json"
+    - "**/*.min.js"
+    - "**/*.min.css"
+    - "**/dist/**"
+    - "**/build/**"
+    - "node_modules/**"
+    - "web/build/**"
+    - "web/.svelte-kit/**"
+
+hook:
+  max_diff_size: 51200
+  on_violation: warn

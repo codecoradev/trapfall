@@ -54,7 +54,8 @@ async fn main() -> Result<()> {
 
     // WebSocket hub for real-time updates
     let ws_hub = WsHub::new(256);
-    let (ws_broadcast_tx, mut ws_broadcast_rx) = mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
+    let (ws_broadcast_tx, mut ws_broadcast_rx) =
+        mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
 
     // Start digest task with WS notifications
     let digest = DigestTask::new(pool.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx);
