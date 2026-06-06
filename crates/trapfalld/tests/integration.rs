@@ -44,7 +44,7 @@ fn make_envelope_body(exception_type: &str, message: &str) -> Vec<u8> {
     let envelope_header = r#"{"event_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
     let item_header = r#"{"type":"event","length":0}"#;
     let event_json = format!(
-        r#"{{"event_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","message":"{message}","exception":{{"values":[{{"type":"{exception_type}","value":"{message}","stacktrace":{{"frames":[{{"filename":"app.rs","lineno":42,"function":"main","in_app":true}}]}}}}]}},"level":"error"}}"#
+        r#"{{"event_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","message":"{message}","exception":{{"values":[{{"type":"{exception_type}","value":"{message}","stacktrace":{{"frames":[{{"filename":"app.rs","lineno":42,"function":"main","in_app":true}}]}}}}]}},\"level\":\"error\"}}\"#
     );
     format!("{envelope_header}\n{item_header}\n{event_json}").into_bytes()
 }
@@ -73,7 +73,7 @@ async fn health_check_returns_ok() {
 }
 
 #[tokio::test]
-async fn ingest_accepts_valid_envelope() {
+async fn ingest_accepts_valid_envelope_with_dsn_key() {
     let pool = test_pool().await;
     let slug = seed_project(&pool).await;
     let state = make_state(pool, RateLimiter::default());
@@ -84,11 +84,31 @@ async fn ingest_accepts_valid_envelope() {
         .method("POST")
         .uri(format!("/api/{slug}/envelope/"))
         .header("content-type", "application/octet-stream")
+        .header("authorization", "Bearer abc123")
         .body(Body::from(body))
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn ingest_rejects_without_auth() {
+    let pool = test_pool().await;
+    let slug = seed_project(&pool).await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    let body = make_envelope_body("Error", "test");
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{slug}/envelope/"))
+        .header("content-type", "application/octet-stream")
+        .body(Body::from(body))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -102,6 +122,7 @@ async fn ingest_404_for_unknown_project() {
         .method("POST")
         .uri("/api/nonexistent/envelope/")
         .header("content-type", "application/octet-stream")
+        .header("authorization", "Bearer abc123")
         .body(Body::from(body))
         .unwrap();
 
@@ -126,6 +147,7 @@ async fn rate_limit_returns_429() {
             .method("POST")
             .uri(format!("/api/{slug}/envelope/"))
             .header("content-type", "application/octet-stream")
+            .header("authorization", "Bearer abc123")
             .body(Body::from(body.clone()))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -137,6 +159,7 @@ async fn rate_limit_returns_429() {
         .method("POST")
         .uri(format!("/api/{slug}/envelope/"))
         .header("content-type", "application/octet-stream")
+        .header("authorization", "Bearer abc123")
         .body(Body::from(body.clone()))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -274,7 +297,8 @@ async fn protected_route_rejects_without_cookie() {
     let state = make_state(pool, RateLimiter::default());
     let app = router(state);
 
-    let req = Request::builder().uri("/api/auth/me").body(Body::empty()).unwrap();
+    // /api/0/auth/me is now under the protected nest
+    let req = Request::builder().uri("/api/0/auth/me").body(Body::empty()).unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

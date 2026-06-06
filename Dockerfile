@@ -15,7 +15,9 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy source and build application
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --bin trapfalld
+# Binary name matches [[bin]] name = "trapfall"
+RUN cp /app/target/release/trapfalld /app/target/release/trapfall || true
 
 # ── Stage 4: Build frontend ───────────────────────────────────────────
 FROM node:20-slim AS frontend
@@ -29,6 +31,7 @@ RUN npm run build
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
 COPY --from=builder /app/target/release/trapfall /usr/local/bin/trapfall
 COPY --from=frontend /app/web/build /app/web/build
 

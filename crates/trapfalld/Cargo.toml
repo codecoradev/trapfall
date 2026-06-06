@@ -34,6 +34,7 @@ uuid = { workspace = true }
 tower = { workspace = true }
 http-body-util = "0.1"
 reqwest = { workspace = true }
+url = "2"
 
 [dev-dependencies]
 tower = { workspace = true }
