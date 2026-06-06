@@ -1,7 +1,28 @@
+# Build artifacts
 target/
 web/node_modules/
 web/.svelte-kit/
+web/build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
 .git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Misc
 *.md
 !README.md
 .env

@@ -87,6 +87,10 @@ class ApiClient {
 		});
 
 		if (!res.ok) {
+			// Redirect to login on 401
+			if (res.status === 401 && !path.startsWith('/auth') && !path.startsWith('/setup')) {
+				gotoLogin();
+			}
 			const body = await res.json().catch(() => ({ error: res.statusText }));
 			throw new ApiClientError(res.status, body.error || res.statusText);
 		}
@@ -187,6 +191,13 @@ export class ApiClientError extends Error {
 	}
 }
 
+/** Redirect to login page (used on 401 responses). */
+function gotoLogin() {
+	if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/setup')) {
+		window.location.href = '/login';
+	}
+}
+
 // ── Alert Rules ────────────────────────────────────────────────────────
 
 export interface AlertRule {
@@ -211,7 +222,8 @@ export interface CreateAlertRule {
 }
 
 export async function listAlertRules(projectSlug: string): Promise<AlertRule[]> {
-	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`);
+	const res = await fetch(`${API_BASE}/0/projects/${projectSlug}/rules`);
+	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
 	if (!res.ok) throw new ApiClientError(res.status, await res.text());
 	return res.json();
 }
@@ -220,26 +232,29 @@ export async function createAlertRule(
 	projectSlug: string,
 	rule: CreateAlertRule
 ): Promise<AlertRule> {
-	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`, {
+	const res = await fetch(`${API_BASE}/0/projects/${projectSlug}/rules`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(rule)
 	});
+	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
 	if (!res.ok) throw new ApiClientError(res.status, await res.text());
 	return res.json();
 }
 
 export async function deleteAlertRule(ruleId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/rules/${ruleId}`, { method: 'DELETE' });
+	const res = await fetch(`${API_BASE}/0/rules/${ruleId}`, { method: 'DELETE' });
+	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
 	if (!res.ok && res.status !== 200) throw new ApiClientError(res.status, await res.text());
 }
 
 export async function toggleAlertRule(ruleId: string, enabled: boolean): Promise<void> {
-	const res = await fetch(`${API_BASE}/rules/${ruleId}/toggle`, {
+	const res = await fetch(`${API_BASE}/0/rules/${ruleId}/toggle`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ enabled })
 	});
+	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
 	if (!res.ok) throw new ApiClientError(res.status, await res.text());
 }
 

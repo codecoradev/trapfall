@@ -1,12 +1,8 @@
 //! Metrics endpoint — simple JSON health/stats.
-//!
-//! Not Prometheus-format — just a simple JSON endpoint for MVP.
-//! Can be upgraded to Prometheus exposition later.
 
 use axum::extract::State;
 use axum::response::Json;
 use serde_json::{Value, json};
-use sqlx::SqlitePool;
 
 use crate::server::AppState;
 
@@ -27,7 +23,13 @@ pub async fn metrics(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
+/// Count rows using parameterized query — table name validated against whitelist.
+async fn count_rows(pool: &sqlx::SqlitePool, table: &str) -> i64 {
+    // Whitelist allowed table names to prevent SQL injection
+    let allowed = ["issues", "events", "projects", "alert_rules", "alert_history"];
+    if !allowed.contains(&table) {
+        return 0;
+    }
     let query = format!("SELECT COUNT(*) as count FROM {table}");
     let row: (i64,) = sqlx::query_as(&query).fetch_one(pool).await.unwrap_or((0,));
     row.0

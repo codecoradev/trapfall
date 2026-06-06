@@ -1,8 +1,7 @@
 //! WebSocket hub — broadcast ServerMessages to connected dashboard clients.
 //!
-//! Uses tokio::sync::broadcast for fan-out. The digest task sends
-//! ServerMessages through a broadcast channel, and each WebSocket
-//! connection subscribes and forwards to its client.
+//! Auth-protected: the middleware layer on the dashboard API router
+//! validates the session cookie before the WS upgrade reaches this handler.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::{extract::State, response::IntoResponse};
@@ -10,32 +9,28 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use trapfall_proto::ServerMessage;
 
-/// Shared hub that broadcast ServerMessages to all connected WS clients.
+/// Shared hub that broadcasts ServerMessages to all connected WS clients.
 #[derive(Clone)]
 pub struct WsHub {
     tx: broadcast::Sender<Arc<ServerMessage>>,
 }
 
 impl WsHub {
-    /// Create a new hub with the given channel capacity.
     pub fn new(capacity: usize) -> Self {
         let (tx, _rx) = broadcast::channel(capacity);
         Self { tx }
     }
 
-    /// Broadcast a message to all connected clients.
     pub fn send(&self, msg: ServerMessage) {
-        // Ignore send error — means no receivers
         let _ = self.tx.send(Arc::new(msg));
     }
 
-    /// Subscribe to broadcasts. Returns a receiver.
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<ServerMessage>> {
         self.tx.subscribe()
     }
 }
 
-/// WebSocket upgrade handler — accepts connection and starts sending messages.
+/// WebSocket upgrade handler — auth is enforced by the router middleware layer.
 pub async fn ws_handler(State(state): State<crate::server::AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub.clone()))
 }
@@ -43,7 +38,6 @@ pub async fn ws_handler(State(state): State<crate::server::AppState>, ws: WebSoc
 async fn handle_socket(mut socket: WebSocket, hub: WsHub) {
     let mut rx = hub.subscribe();
 
-    // Forward broadcast messages to this WebSocket client
     loop {
         match rx.recv().await {
             Ok(msg) => {
@@ -55,7 +49,6 @@ async fn handle_socket(mut socket: WebSocket, hub: WsHub) {
                     }
                 };
                 if socket.send(Message::Text(json.into())).await.is_err() {
-                    // Client disconnected
                     break;
                 }
             }

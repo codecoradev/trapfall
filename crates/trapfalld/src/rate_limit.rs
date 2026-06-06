@@ -1,7 +1,8 @@
 //! Token bucket rate limiter — per-project.
 //!
-//! Lightweight in-memory rate limiting. Each project gets a bucket
-//! that refills at a configurable rate. No external deps needed.
+//! In-memory rate limiting with unbounded bucket eviction.
+/// Maximum number of tracked projects before evicting stale entries.
+const MAX_BUCKETS: usize = 10_000;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -48,24 +49,23 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    /// Create a new rate limiter.
-    ///
-    /// - `max_tokens`: maximum burst size (e.g., 100)
-    /// - `refill_per_sec`: tokens added per second (e.g., 10)
     pub fn new(max_tokens: f64, refill_per_sec: f64) -> Self {
         Self { buckets: Arc::new(Mutex::new(HashMap::new())), max_tokens, refill_per_sec }
     }
 
-    /// Try to consume `cost` tokens for the given project.
-    /// Returns true if allowed, false if rate limited.
     pub fn try_consume(&self, project_id: &str, cost: f64) -> bool {
         let mut buckets = self.buckets.lock().unwrap();
+
+        // Evict stale entries if at capacity
+        if buckets.len() >= MAX_BUCKETS {
+            buckets.retain(|_, b| b.last_refill.elapsed().as_secs() < 3600);
+        }
+
         let bucket =
             buckets.entry(project_id.to_string()).or_insert_with(|| Bucket::new(self.max_tokens, self.refill_per_sec));
         bucket.try_consume(cost)
     }
 
-    /// Get current token count for a project (for metrics).
     #[allow(dead_code)]
     pub fn available_tokens(&self, project_id: &str) -> f64 {
         let mut buckets = self.buckets.lock().unwrap();
@@ -76,7 +76,6 @@ impl RateLimiter {
     }
 }
 
-/// Default rate limiter: 100 burst, 10/sec refill.
 impl Default for RateLimiter {
     fn default() -> Self {
         Self::new(100.0, 10.0)
@@ -96,25 +95,24 @@ mod tests {
 
     #[test]
     fn blocks_over_limit() {
-        let limiter = RateLimiter::new(3.0, 0.0); // no refill
+        let limiter = RateLimiter::new(3.0, 0.0);
         assert!(limiter.try_consume("proj1", 1.0));
         assert!(limiter.try_consume("proj1", 1.0));
         assert!(limiter.try_consume("proj1", 1.0));
-        assert!(!limiter.try_consume("proj1", 1.0)); // blocked
+        assert!(!limiter.try_consume("proj1", 1.0));
     }
 
     #[test]
     fn independent_projects() {
         let limiter = RateLimiter::new(1.0, 0.0);
         assert!(limiter.try_consume("proj1", 1.0));
-        assert!(limiter.try_consume("proj2", 1.0)); // different project
-        assert!(!limiter.try_consume("proj1", 1.0)); // proj1 blocked
+        assert!(limiter.try_consume("proj2", 1.0));
+        assert!(!limiter.try_consume("proj1", 1.0));
     }
 
     #[test]
     fn default_limiter() {
         let limiter = RateLimiter::default();
-        // Should allow 100 burst
         for _ in 0..100 {
             assert!(limiter.try_consume("proj1", 1.0));
         }

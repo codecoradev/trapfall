@@ -4,13 +4,14 @@ use axum::{
     Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
+    middleware,
     response::{IntoResponse, Json},
     routing::{get, post},
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
@@ -32,31 +33,38 @@ pub struct AppState {
 /// Build the Axum router.
 pub fn router(state: AppState) -> Router {
     let auth_routes = crate::auth::auth_routes();
-    let protected_routes = crate::auth::protected_routes(state.clone());
+
+    // ── Dashboard API (auth-protected) ───────────────────────────
+    let dashboard_api = Router::new()
+        .route("/projects", get(list_projects))
+        .route("/projects/{slug}", get(get_project))
+        .route("/projects/{slug}/issues", get(list_issues))
+        .route("/issues/{issue_id}", get(get_issue))
+        .route("/issues/{issue_id}/status", post(set_issue_status))
+        .route("/issues/{issue_id}/events", get(list_events))
+        // Alert Rules
+        .route("/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
+        .route("/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
+        .route("/rules/{rule_id}/toggle", post(toggle_alert_rule))
+        // Auth /me (protected)
+        .route("/auth/me", get(crate::auth::me))
+        // Search
+        .route("/projects/{slug}/search", get(search_issues))
+        // WebSocket (auth via query token)
+        .route("/ws", get(crate::ws::ws_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth));
 
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
-        // ── Public API (ingest) ──────────────────────────────────────
+        // Public ingest API (DSN key auth)
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
-        // ── Dashboard API (auth-protected) ───────────────────────────
-        .route("/api/0/projects", get(list_projects))
-        .route("/api/0/projects/{slug}", get(get_project))
-        .route("/api/0/projects/{slug}/issues", get(list_issues))
-        .route("/api/0/issues/{issue_id}", get(get_issue))
-        .route("/api/0/issues/{issue_id}/status", post(set_issue_status))
-        .route("/api/0/issues/{issue_id}/events", get(list_events))
-        // ── Alert Rules API ────────────────────────────────────────────
-        .route("/api/0/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
-        .route("/api/0/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
-        .route("/api/0/rules/{rule_id}/toggle", post(toggle_alert_rule))
-        // ── Search API ────────────────────────────────────────────────
-        .route("/api/0/projects/{slug}/search", get(search_issues))
-        .route("/api/0/ws", get(crate::ws::ws_handler))
+        // Auth routes (public)
         .merge(auth_routes)
-        .merge(protected_routes)
+        // Protected dashboard routes
+        .nest("/api/0", dashboard_api)
         .fallback(crate::spa::spa_handler)
-        .layer(CorsLayer::permissive())
+        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -95,6 +103,28 @@ async fn ingest_envelope(
     if !state.rate_limiter.try_consume(&project_id, 1.0) {
         return StatusCode::TOO_MANY_REQUESTS;
     }
+
+    // Validate DSN key from Authorization header
+    let store = Store::new(state.pool.clone());
+    let dsn_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| Some(v)));
+    let dsn_key = match dsn_key {
+        Some(k) => k,
+        None => return StatusCode::UNAUTHORIZED,
+    };
+
+    // Verify DSN key matches project
+    let project = match store.get_project_by_slug(&project_id).await {
+        Ok(Some(p)) => p,
+        _ => return StatusCode::NOT_FOUND,
+    };
+    match store.get_project_by_dsn_key(dsn_key).await {
+        Ok(Some(p)) if p.id == project.id => {}
+        _ => return StatusCode::UNAUTHORIZED,
+    }
+
     // Extract content encoding
     let encoding = headers.get("content-encoding").and_then(|v| v.to_str().ok());
 
@@ -109,17 +139,6 @@ async fn ingest_envelope(
 
     if events.is_empty() {
         return StatusCode::OK;
-    }
-
-    // Process each event
-    let store = Store::new(state.pool.clone());
-
-    // Validate project exists
-    if let Ok(Some(_project)) = store.get_project_by_slug(&project_id).await {
-        // Valid project — process events
-    } else {
-        tracing::debug!("Unknown project: {project_id}");
-        return StatusCode::NOT_FOUND;
     }
 
     let mut accepted = 0;
@@ -176,15 +195,13 @@ async fn list_issues(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let offset = ((query.page - 1) * query.per_page) as i64;
-    let limit = query.per_page as i64;
+    let limit = query.per_page.min(100) as i64;
+    let offset = ((query.page - 1) * limit as u32) as i64;
 
+    let total = store.count_issues(&project.id, None, None).await.unwrap_or(0);
     let issues = store.list_issues(&project.id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Total count approximation — use issues.len() for now
-    let total = issues.len() as i64;
-
-    Ok(Json(ListResponse { data: issues, total, page: query.page, per_page: query.per_page }))
+    Ok(Json(ListResponse { data: issues, total, page: query.page, per_page: limit as u32 }))
 }
 
 async fn get_issue(
@@ -231,14 +248,13 @@ async fn list_events(
     Query(query): Query<ListEventsQuery>,
 ) -> Result<Json<ListResponse<trapfall_proto::StoredEvent>>, StatusCode> {
     let store = Store::new(state.pool);
-    let offset = ((query.page - 1) * query.per_page) as i64;
-    let limit = query.per_page as i64;
+    let limit = query.per_page.min(100) as i64;
+    let offset = ((query.page - 1) * limit as u32) as i64;
 
+    let total = store.count_events(&issue_id).await.unwrap_or(0);
     let events = store.list_events(&issue_id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let total = events.len() as i64;
-
-    Ok(Json(ListResponse { data: events, total, page: query.page, per_page: query.per_page }))
+    Ok(Json(ListResponse { data: events, total, page: query.page, per_page: limit as u32 }))
 }
 
 // ── Alert Rule Handlers ────────────────────────────────────────────────

@@ -158,8 +158,8 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
     (StatusCode::OK, [("set-cookie".to_string(), clear_cookie)])
 }
 
-/// GET /api/auth/me — Get current user info (protected).
-async fn me(user: AuthenticatedUser) -> Json<UserInfo> {
+/// GET /auth/me — Get current user info (protected).
+pub async fn me(user: AuthenticatedUser) -> Json<UserInfo> {
     Json(user.0)
 }
 

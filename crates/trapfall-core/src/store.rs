@@ -273,6 +273,15 @@ impl Store {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    /// Count events for an issue.
+    pub async fn count_events(&self, issue_id: &str) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE issue_id = ?")
+            .bind(issue_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count)
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     pub async fn create_alert_rule(
