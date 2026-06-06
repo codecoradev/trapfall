@@ -29,12 +29,17 @@ pub struct AppState {
 
 /// Build the Axum router.
 pub fn router(state: AppState) -> Router {
+    let auth_routes = crate::auth::auth_routes();
+    let protected_routes = crate::auth::protected_routes(state.clone());
+
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
         .route("/api/0/projects", get(list_projects))
         .route("/api/0/projects/{slug}", get(get_project))
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
+        .merge(auth_routes)
+        .merge(protected_routes)
         .fallback(crate::spa::spa_handler)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

@@ -25,13 +25,17 @@ impl Store {
     pub async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
         let id = new_id();
         let dsn = generate_dsn();
+        // Extract DSN key from DSN URL: https://{key}@host/path
+        let dsn_key =
+            dsn.split('@').next().unwrap_or("").trim_start_matches("https://").to_string();
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO projects (id, slug, name, dsn, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(slug)
         .bind(name)
+        .bind(&dsn_key)
         .bind(&dsn)
         .bind(&now)
         .execute(&self.pool)
