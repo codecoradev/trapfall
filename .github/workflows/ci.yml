@@ -67,3 +67,21 @@ jobs:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --workspace
+
+  cora-review:
+    name: Cora Review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch base branch
+        run: git fetch origin develop:develop
+      - name: Install cora
+        run: curl -fsSL https://raw.githubusercontent.com/codecoradev/cora-cli/main/install.sh | sh
+      - name: Run cora review
+        env:
+          CORA_API_KEY: ${{ secrets.CORA_API_KEY }}
+          CORA_BASE_URL: ${{ secrets.CORA_BASE_URL }}
+        run: |
+          cora review --base develop --format compact

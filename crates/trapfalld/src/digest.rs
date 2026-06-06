@@ -2,11 +2,12 @@
 //!
 //! Receives IngestEvents via mpsc channel, groups them by fingerprint,
 //! and commits to the database periodically or when the buffer is full.
+//! After processing, broadcasts ServerMessages via the WebSocket hub.
 
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use trapfall_core::Store;
-use trapfall_proto::IngestEvent;
+use trapfall_proto::{IngestEvent, Issue, ServerMessage};
 
 /// Maximum events to buffer before forcing a flush.
 const FLUSH_THRESHOLD: usize = 50;
@@ -17,11 +18,18 @@ const FLUSH_INTERVAL_MS: u64 = 2000;
 pub struct DigestTask {
     pool: SqlitePool,
     rx: mpsc::Receiver<IngestEvent>,
+    ws_tx: Option<mpsc::UnboundedSender<ServerMessage>>,
 }
 
 impl DigestTask {
     pub fn new(pool: SqlitePool, rx: mpsc::Receiver<IngestEvent>) -> Self {
-        Self { pool, rx }
+        Self { pool, rx, ws_tx: None }
+    }
+
+    /// Attach a channel for WebSocket broadcast notifications.
+    pub fn with_ws_sender(mut self, tx: mpsc::UnboundedSender<ServerMessage>) -> Self {
+        self.ws_tx = Some(tx);
+        self
     }
 
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -35,18 +43,18 @@ impl DigestTask {
                 Some(event) = self.rx.recv() => {
                     buffer.push(event);
                     if buffer.len() >= FLUSH_THRESHOLD {
-                        Self::flush(&store, &mut buffer).await;
+                        Self::flush(&store, &mut buffer, &self.ws_tx).await;
                     }
                 }
                 _ = interval.tick() => {
                     if !buffer.is_empty() {
-                        Self::flush(&store, &mut buffer).await;
+                        Self::flush(&store, &mut buffer, &self.ws_tx).await;
                     }
                 }
                 else => {
                     // Channel closed — drain remaining
                     if !buffer.is_empty() {
-                        Self::flush(&store, &mut buffer).await;
+                        Self::flush(&store, &mut buffer, &self.ws_tx).await;
                     }
                     break;
                 }
@@ -56,20 +64,32 @@ impl DigestTask {
         Ok(())
     }
 
-    async fn flush(store: &Store, buffer: &mut Vec<IngestEvent>) {
+    async fn flush(
+        store: &Store,
+        buffer: &mut Vec<IngestEvent>,
+        ws_tx: &Option<mpsc::UnboundedSender<ServerMessage>>,
+    ) {
         let events = std::mem::take(buffer);
         let count = events.len();
 
         for ev in events {
-            if let Err(e) = Self::process_event(store, ev).await {
-                tracing::warn!("Failed to process event: {e}");
+            match Self::process_event(store, ev).await {
+                Ok(issue) => {
+                    if let Some(tx) = ws_tx {
+                        let msg = ServerMessage::IssueUpdated { issue: issue.clone() };
+                        let _ = tx.send(msg);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to process event: {e}");
+                }
             }
         }
 
         tracing::trace!("Flushed {count} events");
     }
 
-    async fn process_event(store: &Store, ev: IngestEvent) -> anyhow::Result<()> {
+    async fn process_event(store: &Store, ev: IngestEvent) -> anyhow::Result<Issue> {
         // Derive title from event
         let title = derive_title(&ev);
 
@@ -98,9 +118,9 @@ impl DigestTask {
 
         // Store raw event JSON
         let event_json = serde_json::to_string(&ev.event).unwrap_or_default();
-        store.insert_event(&issue.id, &ev.project_id, &event_json).await?;
+        let _event_id = store.insert_event(&issue.id, &ev.project_id, &event_json).await?;
 
-        Ok(())
+        Ok(issue)
     }
 }
 

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use trapfalld::{AppState, Config, DigestTask};
+use trapfalld::{AppState, Config, DigestTask, WsHub};
 
 #[derive(Parser, Debug)]
 #[command(name = "trapfall", version, about = "TrapFall error capture daemon")]
@@ -52,11 +52,24 @@ async fn main() -> Result<()> {
     // Channel: ingest → digest
     let (ingest_tx, ingest_rx) = mpsc::channel::<trapfall_proto::IngestEvent>(1024);
 
-    // Start digest task
-    let digest = DigestTask::new(pool.clone(), ingest_rx);
+    // WebSocket hub for real-time updates
+    let ws_hub = WsHub::new(256);
+    let (ws_broadcast_tx, mut ws_broadcast_rx) =
+        mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
+
+    // Start digest task with WS notifications
+    let digest = DigestTask::new(pool.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx);
     let digest_handle = tokio::spawn(async move {
         if let Err(e) = digest.run().await {
             tracing::error!("Digest task failed: {e}");
+        }
+    });
+
+    // Bridge: mpsc from digest → broadcast to WS clients
+    let hub_clone = ws_hub.clone();
+    let bridge_handle = tokio::spawn(async move {
+        while let Some(msg) = ws_broadcast_rx.recv().await {
+            hub_clone.send(msg);
         }
     });
 
@@ -72,6 +85,7 @@ async fn main() -> Result<()> {
         config,
         ingest_tx,
         rate_limiter: trapfalld::rate_limit::RateLimiter::default(),
+        ws_hub,
     };
 
     // Start HTTP server
@@ -81,5 +95,6 @@ async fn main() -> Result<()> {
 
     digest_handle.abort();
     retention_handle.abort();
+    bridge_handle.abort();
     Ok(())
 }
