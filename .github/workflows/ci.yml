@@ -71,6 +71,7 @@ jobs:
   cora-review:
     name: Cora Review
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
