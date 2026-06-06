@@ -1,50 +1,40 @@
-# ── Stage 1: Build SvelteKit SPA ────────────────────────────────────────
-FROM node:20-slim AS web-builder
+# ── Stage 1: Prepare recipe (dependency fingerprint only) ──────────────
+FROM rust:1.86-slim-bookworm AS chef
+RUN cargo install cargo-chef
+WORKDIR /app
 
-WORKDIR /build/web
+# ── Stage 2: Analyze dependencies (creates recipe.json) ───────────────
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── Stage 3: Build dependencies (cached layer) ────────────────────────
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Copy source and build application
+COPY . .
+RUN cargo build --release
+
+# ── Stage 4: Build frontend ───────────────────────────────────────────
+FROM node:20-slim AS frontend
+WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts
-COPY web/ ./
+COPY web/ .
 RUN npm run build
 
-# ── Stage 2: Build Rust binary ─────────────────────────────────────────
-FROM rust:1.87-slim-bookworm AS rust-builder
-
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
-COPY crates/ crates/
-
-# Copy SPA from stage 1
-COPY --from=web-builder /build/web/build/ web/build/
-
-RUN cargo build --release -p trapfalld
-
-# ── Stage 3: Minimal runtime ───────────────────────────────────────────
+# ── Stage 5: Minimal runtime ─────────────────────────────────────────
 FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && \
-    apt-get install -y ca-certificates libssl3 && \
-    rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/trapfall /usr/local/bin/trapfall
+COPY --from=frontend /app/web/build /app/web/build
 
-RUN groupadd -r trapfall && useradd -r -g trapfall -d /data trapfall
+ENV TRAPFALL_LISTEN=0.0.0.0:3000
+ENV RUST_LOG=trapfall=info
 
-COPY --from=rust-builder /build/target/release/trapfalld /usr/local/bin/trapfall
-
-# Data volume for SQLite
-VOLUME /data
-
-ENV RUST_LOG=info
-ENV TRAPFALL_DB=/data/trapfall.db
-ENV TRAPFALL_LISTEN=0.0.0.0:9090
-
-EXPOSE 9090
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["trapfall", "healthcheck"]
-
-USER trapfall
-WORKDIR /data
-
+EXPOSE 3000
 ENTRYPOINT ["trapfall"]
 CMD ["serve"]
