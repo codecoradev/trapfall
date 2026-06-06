@@ -7,7 +7,7 @@
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use trapfall_core::Store;
-use trapfall_proto::{IngestEvent, ServerMessage};
+use trapfall_proto::{IngestEvent, Issue, ServerMessage};
 
 /// Maximum events to buffer before forcing a flush.
 const FLUSH_THRESHOLD: usize = 50;
@@ -64,7 +64,11 @@ impl DigestTask {
         Ok(())
     }
 
-    async fn flush(store: &Store, buffer: &mut Vec<IngestEvent>, ws_tx: &Option<mpsc::UnboundedSender<ServerMessage>>) {
+    async fn flush(
+        store: &Store,
+        buffer: &mut Vec<IngestEvent>,
+        ws_tx: &Option<mpsc::UnboundedSender<ServerMessage>>,
+    ) {
         let events = std::mem::take(buffer);
         let count = events.len();
 
@@ -114,7 +118,7 @@ impl DigestTask {
 
         // Store raw event JSON
         let event_json = serde_json::to_string(&ev.event).unwrap_or_default();
-        let event_id = store.insert_event(&issue.id, &ev.project_id, &event_json).await?;
+        let _event_id = store.insert_event(&issue.id, &ev.project_id, &event_json).await?;
 
         Ok(issue)
     }

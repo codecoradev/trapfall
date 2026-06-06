@@ -4,12 +4,9 @@
 //! ServerMessages through a broadcast channel, and each WebSocket
 //! connection subscribes and forwards to its client.
 
-use std::sync::Arc;
-use axum::{
-    extract::State,
-    response::IntoResponse,
-};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::{extract::State, response::IntoResponse};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use trapfall_proto::ServerMessage;
 
@@ -46,7 +43,7 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub.clone()))
 }
 
-async fn handle_socket(socket: WebSocket, hub: WsHub) {
+async fn handle_socket(mut socket: WebSocket, hub: WsHub) {
     let mut rx = hub.subscribe();
 
     // Forward broadcast messages to this WebSocket client
