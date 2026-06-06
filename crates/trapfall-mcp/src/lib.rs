@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use trapfall_proto::IssueStatus;
 
 use trapfall_core::Store;

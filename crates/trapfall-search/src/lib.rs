@@ -3,7 +3,7 @@
 //! Uses SQLite LIKE for substring matching on title + culprit columns.
 //! Optimized for error messages (100-500 chars, <100K rows).
 
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use trapfall_proto::{Issue, Level};
 
 /// Search issues by substring query with optional filters.
@@ -118,21 +118,4 @@ pub async fn search_issues(
     }
 
     Ok(issues)
-}
-
-// Row helper — not used with raw query above, keeping for compat
-#[allow(dead_code)]
-#[derive(sqlx::FromRow)]
-struct IssueRow {
-    id: String,
-    project_id: String,
-    fingerprint: String,
-    title: String,
-    culprit: Option<String>,
-    status: String,
-    level: String,
-    count: i64,
-    user_count: i64,
-    first_seen: String,
-    last_seen: String,
 }
