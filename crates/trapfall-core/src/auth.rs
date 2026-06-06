@@ -11,7 +11,6 @@ use argon2::{
 };
 use chrono::{Duration, Utc};
 use rand::rngs::OsRng;
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{new_id, store::Store};

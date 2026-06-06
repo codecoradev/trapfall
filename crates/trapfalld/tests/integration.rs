@@ -141,3 +141,139 @@ async fn rate_limit_returns_429() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
+
+// ── Auth Integration Tests ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn setup_status_needs_setup() {
+    let pool = test_pool().await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    let req = Request::builder().uri("/api/setup").body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["needs_setup"], true);
+}
+
+#[tokio::test]
+async fn setup_creates_admin_and_project() {
+    let pool = test_pool().await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/setup")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["user"]["email"], "admin@test.com");
+    assert_eq!(json["project_slug"], "default");
+    assert!(json["dsn"].as_str().unwrap().contains("https://"));
+}
+
+#[tokio::test]
+async fn setup_forbidden_after_first_user() {
+    let pool = test_pool().await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    // First setup
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/setup")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Second setup should be forbidden
+    let req2 = Request::builder()
+        .method("POST")
+        .uri("/api/setup")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"second@test.com","name":"Second","password":"password456"}"#))
+        .unwrap();
+    let resp2 = app.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn login_returns_session_cookie() {
+    let pool = test_pool().await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    // Setup first
+    let setup_req = Request::builder()
+        .method("POST")
+        .uri("/api/setup")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
+        .unwrap();
+    app.clone().oneshot(setup_req).await.unwrap();
+
+    // Login
+    let login_req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","password":"password123"}"#))
+        .unwrap();
+    let resp = app.oneshot(login_req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Check set-cookie header
+    let cookie = resp.headers().get("set-cookie").unwrap().to_str().unwrap();
+    assert!(cookie.contains("trapfall_session="));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("Secure"));
+    assert!(cookie.contains("SameSite=Strict"));
+}
+
+#[tokio::test]
+async fn login_rejects_wrong_password() {
+    let pool = test_pool().await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    // Setup
+    let setup_req = Request::builder()
+        .method("POST")
+        .uri("/api/setup")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
+        .unwrap();
+    app.clone().oneshot(setup_req).await.unwrap();
+
+    // Login with wrong password
+    let login_req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","password":"wrong"}"#))
+        .unwrap();
+    let resp = app.oneshot(login_req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn protected_route_rejects_without_cookie() {
+    let pool = test_pool().await;
+    let state = make_state(pool, RateLimiter::default());
+    let app = router(state);
+
+    let req = Request::builder().uri("/api/auth/me").body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
