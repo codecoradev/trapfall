@@ -72,9 +72,7 @@ pub fn auth_routes() -> Router<AppState> {
 
 /// Build auth-protected routes (require session cookie).
 pub fn protected_routes(state: AppState) -> Router<AppState> {
-    Router::new()
-        .route("/api/auth/me", get(me))
-        .layer(middleware::from_fn_with_state(state, require_auth))
+    Router::new().route("/api/auth/me", get(me)).layer(middleware::from_fn_with_state(state, require_auth))
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────
@@ -95,10 +93,7 @@ async fn setup(
 
     // Only allow when no users exist
     if store.has_users().await.unwrap_or(false) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(AuthErrorJson { error: "Setup already completed".into() }),
-        ));
+        return Err((StatusCode::FORBIDDEN, Json(AuthErrorJson { error: "Setup already completed".into() })));
     }
 
     // Create admin user
@@ -108,14 +103,12 @@ async fn setup(
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(AuthErrorJson { error: e.to_string() })))?;
 
     // Create default project
-    let project = store.create_project("default", "Default Project").await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: e.to_string() }))
-    })?;
+    let project = store
+        .create_project("default", "Default Project")
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: e.to_string() })))?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(SetupResponse { user: user.into(), project_slug: project.slug, dsn: project.dsn }),
-    ))
+    Ok((StatusCode::CREATED, Json(SetupResponse { user: user.into(), project_slug: project.slug, dsn: project.dsn })))
 }
 
 /// POST /api/auth/login — Authenticate and set session cookie.
@@ -123,10 +116,7 @@ async fn login(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> Result<
-    (StatusCode, [(String, String); 1], Json<LoginResponse>),
-    (StatusCode, Json<AuthErrorJson>),
-> {
+) -> Result<(StatusCode, [(String, String); 1], Json<LoginResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = Store::new(state.pool);
 
     // Extract client IP (best-effort)
@@ -142,40 +132,29 @@ async fn login(
                 "{}={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
                 SESSION_COOKIE, session.token, COOKIE_MAX_AGE
             );
-            Ok((
-                StatusCode::OK,
-                [("set-cookie".to_string(), cookie)],
-                Json(LoginResponse { user: user_info }),
-            ))
+            Ok((StatusCode::OK, [("set-cookie".to_string(), cookie)], Json(LoginResponse { user: user_info })))
         }
-        Err(AuthError::LockedOut) => Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(AuthErrorJson { error: "Invalid credentials".into() }),
-        )),
-        Err(AuthError::InvalidCredentials) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(AuthErrorJson { error: "Invalid credentials".into() }),
-        )),
-        Err(AuthError::Internal) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(AuthErrorJson { error: "Internal error".into() }),
-        )),
+        Err(AuthError::LockedOut) => {
+            Err((StatusCode::TOO_MANY_REQUESTS, Json(AuthErrorJson { error: "Invalid credentials".into() })))
+        }
+        Err(AuthError::InvalidCredentials) => {
+            Err((StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "Invalid credentials".into() })))
+        }
+        Err(AuthError::Internal) => {
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: "Internal error".into() })))
+        }
     }
 }
 
 /// POST /api/auth/logout — Clear session cookie.
-async fn logout(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-) -> (StatusCode, [(String, String); 1]) {
+async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -> (StatusCode, [(String, String); 1]) {
     // Extract session token from cookie
     if let Some(token) = extract_session_token(&headers) {
         let store = Store::new(state.pool);
         let _ = store.delete_session(&token).await;
     }
 
-    let clear_cookie =
-        format!("{}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0", SESSION_COOKIE);
+    let clear_cookie = format!("{}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0", SESSION_COOKIE);
     (StatusCode::OK, [("set-cookie".to_string(), clear_cookie)])
 }
 
@@ -187,11 +166,7 @@ async fn me(user: AuthenticatedUser) -> Json<UserInfo> {
 // ── Middleware ──────────────────────────────────────────────────────────
 
 /// Auth middleware — extracts session cookie, validates, injects user.
-pub async fn require_auth(
-    State(state): State<AppState>,
-    mut req: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
+pub async fn require_auth(State(state): State<AppState>, mut req: Request<axum::body::Body>, next: Next) -> Response {
     let reject = |msg: &str| -> Response {
         (StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: msg.to_string() })).into_response()
     };
@@ -229,9 +204,11 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
     type Rejection = (StatusCode, Json<AuthErrorJson>);
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<AuthenticatedUser>().cloned().ok_or_else(|| {
-            (StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "Not authenticated".into() }))
-        })
+        parts
+            .extensions
+            .get::<AuthenticatedUser>()
+            .cloned()
+            .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "Not authenticated".into() })))
     }
 }
 

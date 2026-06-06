@@ -36,10 +36,7 @@ impl WsHub {
 }
 
 /// WebSocket upgrade handler — accepts connection and starts sending messages.
-pub async fn ws_handler(
-    State(state): State<crate::server::AppState>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
+pub async fn ws_handler(State(state): State<crate::server::AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub.clone()))
 }
 

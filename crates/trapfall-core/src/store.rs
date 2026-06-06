@@ -26,53 +26,47 @@ impl Store {
         let id = new_id();
         let dsn = generate_dsn();
         // Extract DSN key from DSN URL: https://{key}@host/path
-        let dsn_key =
-            dsn.split('@').next().unwrap_or("").trim_start_matches("https://").to_string();
+        let dsn_key = dsn.split('@').next().unwrap_or("").trim_start_matches("https://").to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(slug)
-        .bind(name)
-        .bind(&dsn_key)
-        .bind(&dsn)
-        .bind(&now)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(&id)
+            .bind(slug)
+            .bind(name)
+            .bind(&dsn_key)
+            .bind(&dsn)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
 
         Ok(Project { id, slug: slug.to_string(), name: name.to_string(), dsn, created_at: now })
     }
 
     pub async fn get_project_by_slug(&self, slug: &str) -> Result<Option<Project>> {
-        let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, slug, name, dsn, created_at FROM projects WHERE slug = ?",
-        )
-        .bind(slug)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row =
+            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE slug = ?")
+                .bind(slug)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(row.map(Into::into))
     }
 
     pub async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
         let pattern = format!("https://{sentry_key}@%");
-        let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn LIKE ?",
-        )
-        .bind(pattern)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row =
+            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn LIKE ?")
+                .bind(pattern)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(row.map(Into::into))
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
-        let rows = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, slug, name, dsn, created_at FROM projects ORDER BY created_at",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects ORDER BY created_at")
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
@@ -174,12 +168,7 @@ impl Store {
         Ok(row.map(Into::into))
     }
 
-    pub async fn list_issues(
-        &self,
-        project_id: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<Issue>> {
+    pub async fn list_issues(&self, project_id: &str, limit: i64, offset: i64) -> Result<Vec<Issue>> {
         let rows = sqlx::query_as::<_, IssueRow>(
             "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE project_id = ? ORDER BY last_seen DESC LIMIT ? OFFSET ?",
         )
@@ -203,12 +192,7 @@ impl Store {
 
     // ── Events ──────────────────────────────────────────────────────────
 
-    pub async fn insert_event(
-        &self,
-        issue_id: &str,
-        project_id: &str,
-        event_data: &str,
-    ) -> Result<String> {
+    pub async fn insert_event(&self, issue_id: &str, project_id: &str, event_data: &str) -> Result<String> {
         let id = new_id();
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES (?, ?, ?, ?, ?)")
@@ -222,12 +206,7 @@ impl Store {
         Ok(id)
     }
 
-    pub async fn list_events(
-        &self,
-        issue_id: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<StoredEvent>> {
+    pub async fn list_events(&self, issue_id: &str, limit: i64, offset: i64) -> Result<Vec<StoredEvent>> {
         let rows = sqlx::query_as::<_, EventRow>(
             "SELECT id, issue_id, project_id, data, received_at FROM events WHERE issue_id = ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
         )
@@ -272,21 +251,16 @@ impl Store {
             project_id: project_id.to_string(),
             name: name.to_string(),
             enabled: true,
-            conditions: serde_json::from_str(conditions)
-                .unwrap_or(serde_json::Value::Object(Default::default())),
+            conditions: serde_json::from_str(conditions).unwrap_or(serde_json::Value::Object(Default::default())),
             action_type: action_type.to_string(),
-            action_config: serde_json::from_str(action_config)
-                .unwrap_or(serde_json::Value::Object(Default::default())),
+            action_config: serde_json::from_str(action_config).unwrap_or(serde_json::Value::Object(Default::default())),
             cooldown_seconds,
             created_at: now.clone(),
             updated_at: now,
         })
     }
 
-    pub async fn list_alert_rules(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<trapfall_proto::AlertRule>> {
+    pub async fn list_alert_rules(&self, project_id: &str) -> Result<Vec<trapfall_proto::AlertRule>> {
         let rows = sqlx::query_as::<_, AlertRuleRow>(
             "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE project_id = ? ORDER BY created_at",
         )
@@ -307,10 +281,7 @@ impl Store {
     }
 
     pub async fn delete_alert_rule(&self, rule_id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM alert_rules WHERE id = ?")
-            .bind(rule_id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query("DELETE FROM alert_rules WHERE id = ?").bind(rule_id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -326,10 +297,7 @@ impl Store {
     }
 
     /// Get all enabled rules for a project (used by rules engine).
-    pub async fn get_enabled_rules_for_project(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<trapfall_proto::AlertRule>> {
+    pub async fn get_enabled_rules_for_project(&self, project_id: &str) -> Result<Vec<trapfall_proto::AlertRule>> {
         let rows = sqlx::query_as::<_, AlertRuleRow>(
             "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE project_id = ? AND enabled = 1",
         )
@@ -341,12 +309,7 @@ impl Store {
 
     // ── Alert History ───────────────────────────────────────────────────
 
-    pub async fn insert_alert_history(
-        &self,
-        rule_id: &str,
-        project_id: &str,
-        issue_id: &str,
-    ) -> Result<String> {
+    pub async fn insert_alert_history(&self, rule_id: &str, project_id: &str, issue_id: &str) -> Result<String> {
         let id = new_id();
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
@@ -476,8 +439,7 @@ impl From<AlertRuleRow> for trapfall_proto::AlertRule {
             project_id: r.project_id,
             name: r.name,
             enabled: r.enabled,
-            conditions: serde_json::from_str(&r.conditions)
-                .unwrap_or(serde_json::Value::Object(Default::default())),
+            conditions: serde_json::from_str(&r.conditions).unwrap_or(serde_json::Value::Object(Default::default())),
             action_type: r.action_type,
             action_config: serde_json::from_str(&r.action_config)
                 .unwrap_or(serde_json::Value::Object(Default::default())),

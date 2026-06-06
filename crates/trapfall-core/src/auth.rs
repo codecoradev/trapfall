@@ -6,8 +6,7 @@
 //! - #20: Session management (cookie-based, server-side)
 use anyhow::Result;
 use argon2::{
-    Algorithm, Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version,
-    password_hash::SaltString,
+    Algorithm, Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version, password_hash::SaltString,
 };
 use chrono::{Duration, Utc};
 use rand::rngs::OsRng;
@@ -86,9 +85,7 @@ pub struct AuthAttempt {
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, hash_params().clone());
-    let hash = argon2
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| anyhow::anyhow!("Hash failed: {e}"))?;
+    let hash = argon2.hash_password(password.as_bytes(), &salt).map_err(|e| anyhow::anyhow!("Hash failed: {e}"))?;
     Ok(hash.to_string())
 }
 
@@ -117,8 +114,7 @@ impl Store {
 
     /// Check if any users exist (for setup wizard).
     pub async fn has_users(&self) -> Result<bool> {
-        let row: Option<(i64,)> =
-            sqlx::query_as("SELECT COUNT(*) FROM users").fetch_optional(self.pool()).await?;
+        let row: Option<(i64,)> = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_optional(self.pool()).await?;
         Ok(row.map(|(c,)| c > 0).unwrap_or(false))
     }
 
@@ -181,16 +177,14 @@ impl Store {
         let expires_at = (now + Duration::days(SESSION_DURATION_DAYS)).to_rfc3339();
         let created_at = now.to_rfc3339();
 
-        sqlx::query(
-            "INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(user_id)
-        .bind(&token)
-        .bind(&expires_at)
-        .bind(&created_at)
-        .execute(self.pool())
-        .await?;
+        sqlx::query("INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(&id)
+            .bind(user_id)
+            .bind(&token)
+            .bind(&expires_at)
+            .bind(&created_at)
+            .execute(self.pool())
+            .await?;
 
         Ok(Session { id, user_id: user_id.to_string(), token, expires_at, created_at })
     }
@@ -227,20 +221,14 @@ impl Store {
 
     /// Delete a session (logout).
     pub async fn delete_session(&self, token: &str) -> Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE token = ?")
-            .bind(token)
-            .execute(self.pool())
-            .await?;
+        sqlx::query("DELETE FROM sessions WHERE token = ?").bind(token).execute(self.pool()).await?;
         Ok(())
     }
 
     /// Cleanup expired sessions.
     pub async fn cleanup_expired_sessions(&self) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
-            .bind(&now)
-            .execute(self.pool())
-            .await?;
+        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?").bind(&now).execute(self.pool()).await?;
         Ok(result.rows_affected())
     }
 
@@ -250,53 +238,44 @@ impl Store {
     pub async fn record_auth_attempt(&self, email: &str, ip: &str, success: bool) -> Result<()> {
         let id = new_id();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO auth_attempts (id, email, ip, success, created_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(email)
-        .bind(ip)
-        .bind(success)
-        .bind(&now)
-        .execute(self.pool())
-        .await?;
+        sqlx::query("INSERT INTO auth_attempts (id, email, ip, success, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(&id)
+            .bind(email)
+            .bind(ip)
+            .bind(success)
+            .bind(&now)
+            .execute(self.pool())
+            .await?;
         Ok(())
     }
 
     /// Count failed auth attempts for an email in the last N minutes.
     pub async fn count_failed_attempts_email(&self, email: &str, minutes: i64) -> Result<i64> {
         let cutoff = (Utc::now() - Duration::minutes(minutes)).to_rfc3339();
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT COUNT(*) FROM auth_attempts WHERE email = ? AND success = 0 AND created_at > ?",
-        )
-        .bind(email)
-        .bind(&cutoff)
-        .fetch_optional(self.pool())
-        .await?;
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE email = ? AND success = 0 AND created_at > ?")
+                .bind(email)
+                .bind(&cutoff)
+                .fetch_optional(self.pool())
+                .await?;
         Ok(row.map(|(c,)| c).unwrap_or(0))
     }
 
     /// Count failed auth attempts for an IP in the last N minutes.
     pub async fn count_failed_attempts_ip(&self, ip: &str, minutes: i64) -> Result<i64> {
         let cutoff = (Utc::now() - Duration::minutes(minutes)).to_rfc3339();
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT COUNT(*) FROM auth_attempts WHERE ip = ? AND success = 0 AND created_at > ?",
-        )
-        .bind(ip)
-        .bind(&cutoff)
-        .fetch_optional(self.pool())
-        .await?;
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE ip = ? AND success = 0 AND created_at > ?")
+                .bind(ip)
+                .bind(&cutoff)
+                .fetch_optional(self.pool())
+                .await?;
         Ok(row.map(|(c,)| c).unwrap_or(0))
     }
 
     /// Authenticate a user: verify password + create session.
     /// Returns (session, user_info) on success.
-    pub async fn authenticate(
-        &self,
-        email: &str,
-        password: &str,
-        ip: &str,
-    ) -> Result<(Session, UserInfo), AuthError> {
+    pub async fn authenticate(&self, email: &str, password: &str, ip: &str) -> Result<(Session, UserInfo), AuthError> {
         // Check brute-force lockout
         let email_fails = self.count_failed_attempts_email(email, 15).await.unwrap_or(0);
         if email_fails >= 5 {
@@ -394,8 +373,7 @@ mod tests {
         assert!(store.has_users().await.unwrap());
 
         // Authenticate successfully
-        let (session, info) =
-            store.authenticate("admin@test.com", "password123", "127.0.0.1").await.unwrap();
+        let (session, info) = store.authenticate("admin@test.com", "password123", "127.0.0.1").await.unwrap();
         assert_eq!(info.email, "admin@test.com");
         assert_eq!(session.user_id, user.id);
 
@@ -433,8 +411,7 @@ mod tests {
         let store = Store::new(pool);
 
         store.create_user("expire@test.com", "Expire Test", "password123").await.unwrap();
-        let (session, _) =
-            store.authenticate("expire@test.com", "password123", "127.0.0.1").await.unwrap();
+        let (session, _) = store.authenticate("expire@test.com", "password123", "127.0.0.1").await.unwrap();
 
         // Session exists
         assert!(store.get_session(&session.token).await.unwrap().is_some());

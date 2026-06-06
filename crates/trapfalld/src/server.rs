@@ -4,7 +4,7 @@ use axum::{
     Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -50,6 +50,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
         .route("/api/0/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
         .route("/api/0/rules/{rule_id}/toggle", post(toggle_alert_rule))
+        // ── Search API ────────────────────────────────────────────────
+        .route("/api/0/projects/{slug}/search", get(search_issues))
         .route("/api/0/ws", get(crate::ws::ws_handler))
         .merge(auth_routes)
         .merge(protected_routes)
@@ -65,9 +67,7 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn list_projects(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
+async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
     let store = Store::new(state.pool);
     let projects = store.list_projects().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(projects))
@@ -78,8 +78,7 @@ async fn get_project(
     Path(slug): Path<String>,
 ) -> Result<Json<trapfall_proto::Project>, StatusCode> {
     let store = Store::new(state.pool);
-    let project =
-        store.get_project_by_slug(&slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project = store.get_project_by_slug(&slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     match project {
         Some(p) => Ok(Json(p)),
         None => Err(StatusCode::NOT_FOUND),
@@ -180,10 +179,7 @@ async fn list_issues(
     let offset = ((query.page - 1) * query.per_page) as i64;
     let limit = query.per_page as i64;
 
-    let issues = store
-        .list_issues(&project.id, limit, offset)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let issues = store.list_issues(&project.id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Total count approximation — use issues.len() for now
     let total = issues.len() as i64;
@@ -238,10 +234,7 @@ async fn list_events(
     let offset = ((query.page - 1) * query.per_page) as i64;
     let limit = query.per_page as i64;
 
-    let events = store
-        .list_events(&issue_id, limit, offset)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let events = store.list_events(&issue_id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let total = events.len() as i64;
 
@@ -261,8 +254,7 @@ async fn list_alert_rules(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let rules =
-        store.list_alert_rules(&project.id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rules = store.list_alert_rules(&project.id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rules))
 }
 
@@ -309,10 +301,7 @@ async fn get_alert_rule(
         .map(Json)
 }
 
-async fn delete_alert_rule(
-    State(state): State<AppState>,
-    Path(rule_id): Path<String>,
-) -> StatusCode {
+async fn delete_alert_rule(State(state): State<AppState>, Path(rule_id): Path<String>) -> StatusCode {
     let store = Store::new(state.pool);
     match store.delete_alert_rule(&rule_id).await {
         Ok(true) => StatusCode::OK,
@@ -335,5 +324,46 @@ async fn toggle_alert_rule(
     match store.toggle_alert_rule(&rule_id, req.enabled).await {
         Ok(()) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+// ── Search Handler ─────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    status: Option<String>,
+    level: Option<String>,
+    limit: Option<i64>,
+    page: Option<i64>,
+}
+
+async fn search_issues(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<SearchQuery>,
+) -> impl IntoResponse {
+    let store = Store::new(state.pool.clone());
+    let project = match store.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let limit = query.limit.unwrap_or(50).min(100);
+    let offset = query.page.unwrap_or(0) * limit;
+
+    match trapfall_search::search_issues(
+        &state.pool,
+        &query.q,
+        Some(&project.id),
+        query.status.as_deref(),
+        query.level.as_deref(),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(issues) => Json(ListResponse { data: issues, total: 0, page: 0, per_page: limit as u32 }).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

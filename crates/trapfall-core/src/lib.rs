@@ -30,12 +30,8 @@ pub async fn open_pool(db_path: &str) -> Result<SqlitePool> {
 
 /// Run all database migrations.
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql"))
-        .execute(pool)
-        .await?;
-    sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql"))
-        .execute(pool)
-        .await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql")).execute(pool).await?;
     Ok(())
 }
 

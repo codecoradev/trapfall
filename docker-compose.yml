@@ -1,0 +1,22 @@
+services:
+  trapfall:
+    build: .
+    container_name: trapfall
+    restart: unless-stopped
+    ports:
+      - "${TRAPFALL_PORT:-9090}:9090"
+    volumes:
+      - trapfall-data:/data
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - TRAPFALL_DB=/data/trapfall.db
+      - TRAPFALL_LISTEN=0.0.0.0:9090
+    healthcheck:
+      test: ["CMD", "trapfall", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  trapfall-data:
