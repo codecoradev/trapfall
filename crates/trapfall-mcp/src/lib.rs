@@ -10,8 +10,6 @@ use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 use trapfall_proto::IssueStatus;
 
-use trapfall_core::Store;
-
 /// Process a single JSON-RPC message and return the response string.
 /// Used by both the stdin server loop and integration tests.
 pub async fn handle_message(input: &str, pool: &SqlitePool, store: &trapfall_core::Store) -> String {

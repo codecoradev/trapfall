@@ -367,7 +367,7 @@ async fn search_issues(
     .await
     {
         Ok(issues) => {
-            Json(ListResponse { data: issues, total: total as u32, page, per_page: limit as u32 }).into_response()
+            Json(ListResponse { data: issues, total, page: page as u32, per_page: limit as u32 }).into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
