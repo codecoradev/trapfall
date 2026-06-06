@@ -6,8 +6,8 @@ license.workspace = true
 description = "Ingest pipeline — HTTP handler, envelope parser, digest loop"
 
 [dependencies]
-trapfall-proto = { workspace = true }
-trapfall-core = { workspace = true }
+trapfall_proto = { workspace = true }
+trapfall_core = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

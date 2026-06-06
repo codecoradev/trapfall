@@ -10,13 +10,13 @@ name = "trapfall"
 path = "src/main.rs"
 
 [dependencies]
-trapfall-proto = { workspace = true }
-trapfall-core = { workspace = true }
-trapfall-ingest = { workspace = true }
-trapfall-search = { workspace = true }
-trapfall-alert = { workspace = true }
-trapfall-mcp = { workspace = true }
-trapfall-dashboard = { workspace = true }
+trapfall_proto = { workspace = true }
+trapfall_core = { workspace = true }
+trapfall_ingest = { workspace = true }
+trapfall_search = { workspace = true }
+trapfall_alert = { workspace = true }
+trapfall_mcp = { workspace = true }
+trapfall_dashboard = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
