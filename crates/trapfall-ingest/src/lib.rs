@@ -1,3 +1,7 @@
-//! Ingest pipeline — HTTP handler, envelope parser, digest loop
+//! # trapfall-ingest
+//!
+//! HTTP ingest pipeline — Sentry envelope parser, digest loop, handlers.
 
-// TODO: Phase 0 — scaffold only
+pub mod envelope;
+
+pub use envelope::{extract_sentry_key, parse_envelope};

@@ -42,6 +42,9 @@ http-body-util = "0.1"
 # Crypto
 blake3 = "1"
 
+# Compression
+flate2 = "1"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
