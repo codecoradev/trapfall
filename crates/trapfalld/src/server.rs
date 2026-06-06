@@ -106,10 +106,8 @@ async fn ingest_envelope(
 
     // Validate DSN key from Authorization header
     let store = Store::new(state.pool.clone());
-    let dsn_key = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| Some(v)));
+    let dsn_key =
+        headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ").or(Some(v)));
     let dsn_key = match dsn_key {
         Some(k) => k,
         None => return StatusCode::UNAUTHORIZED,

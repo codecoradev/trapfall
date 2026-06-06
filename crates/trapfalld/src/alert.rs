@@ -1,7 +1,7 @@
 //! Alert engine — evaluates rules against incoming issues and dispatches webhooks.
 
 use sqlx::SqlitePool;
-use std::sync::Arc;
+use std::sync::LazyLock;
 use tokio::sync::mpsc;
 use trapfall_proto::{AlertRule, Issue};
 
