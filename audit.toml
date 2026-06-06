@@ -1,0 +1,8 @@
+# Cargo audit configuration — known acceptable ignores.
+# Review monthly and remove entries when patched.
+
+[advisories]
+# RUSTSEC-2023-0071 — rsa Marvin Attack (medium 5.9)
+# Used by sqlx sqlite feature chain, not exposed in TrapFall's attack surface.
+# We use SQLite only (no RSA keys in production).
+ignore = ["RUSTSEC-2023-0071"]
