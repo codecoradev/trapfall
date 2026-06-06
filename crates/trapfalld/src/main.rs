@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use trapfalld::{spawn_alert_engine, AppState, Config, DigestTask, WsHub};
+use trapfalld::{AppState, Config, DigestTask, WsHub, spawn_alert_engine};
 
 #[derive(Parser, Debug)]
 #[command(name = "trapfall", version, about = "TrapFall error capture daemon")]

@@ -2,8 +2,8 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tower::ServiceExt;
 
 use std::path::PathBuf;

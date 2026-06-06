@@ -4,7 +4,7 @@
 //! Falls back to index.html for client-side routing.
 
 use axum::{
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
 use rust_embed::Embed;

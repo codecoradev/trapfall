@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 use trapfall_proto::IssueStatus;
 

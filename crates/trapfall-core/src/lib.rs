@@ -6,13 +6,13 @@ pub mod auth;
 pub mod fingerprint;
 pub mod store;
 
-pub use auth::{hash_password, verify_password, UserInfo};
+pub use auth::{UserInfo, hash_password, verify_password};
 pub use fingerprint::derive_fingerprint;
 pub use store::Store;
 
 use anyhow::Result;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
 use uuid::Uuid;
 

@@ -5,16 +5,16 @@
 //! - #22: Login/logout API + auth middleware
 //! - #23: Brute-force lockout (enforced via Store::authenticate)
 
+use axum::Router;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
-use axum::Router;
 use serde::{Deserialize, Serialize};
-use trapfall_core::auth::{AuthError, UserInfo};
 use trapfall_core::Store;
+use trapfall_core::auth::{AuthError, UserInfo};
 
 use crate::AppState;
 

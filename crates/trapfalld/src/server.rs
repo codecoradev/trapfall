@@ -1,11 +1,11 @@
 //! HTTP server — Axum router, ingest handler, health check, API routes.
 
 use axum::{
+    Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, post},
-    Router,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -363,7 +363,7 @@ async fn search_issues(
     )
     .await
     {
-        Ok(issues) => Json(ListResponse { data: issues, total: 0, page: 0, per_page: limit }).into_response(),
+        Ok(issues) => Json(ListResponse { data: issues, total: 0, page: 0, per_page: limit as u32 }).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
