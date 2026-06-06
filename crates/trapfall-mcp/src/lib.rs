@@ -498,7 +498,7 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool) -> Result<Value, 
             Ok(json!({ "content": [{ "type": "text", "text": format!("DSN rotated for {}. New key: {}...{}", slug, &new_key[..8], &new_key[new_key.len()-4..]) }] }))
         }
         "healthcheck" => {
-            let ok =
+            let ok: i64 =
                 sqlx::query_scalar("SELECT 1").fetch_one(pool).await.map_err(|e| e.to_string())?;
             Ok(json!({ "content": [{ "type": "text", "text": format!("Healthy (db={})", ok) }] }))
         }
