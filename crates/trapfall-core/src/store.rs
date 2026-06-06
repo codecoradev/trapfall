@@ -1,0 +1,326 @@
+//! Store — CRUD operations for projects, issues, events.
+
+use anyhow::Result;
+use sqlx::SqlitePool;
+use trapfall_proto::{Issue, IssueStatus, Level, Project, StoredEvent};
+
+use crate::{generate_dsn, new_id};
+
+#[derive(Clone)]
+pub struct Store {
+    pool: SqlitePool,
+}
+
+impl Store {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    // ── Projects ────────────────────────────────────────────────────────
+
+    pub async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
+        let id = new_id();
+        let dsn = generate_dsn();
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO projects (id, slug, name, dsn, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(slug)
+        .bind(name)
+        .bind(&dsn)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(Project { id, slug: slug.to_string(), name: name.to_string(), dsn, created_at: now })
+    }
+
+    pub async fn get_project_by_slug(&self, slug: &str) -> Result<Option<Project>> {
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at FROM projects WHERE slug = ?",
+        )
+        .bind(slug)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
+        let pattern = format!("https://{sentry_key}@%");
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn LIKE ?",
+        )
+        .bind(pattern)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn list_projects(&self) -> Result<Vec<Project>> {
+        let rows = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at FROM projects ORDER BY created_at",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn rotate_dsn(&self, project_id: &str) -> Result<String> {
+        let new_dsn = generate_dsn();
+        sqlx::query("UPDATE projects SET dsn = ? WHERE id = ?")
+            .bind(&new_dsn)
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(new_dsn)
+    }
+
+    // ── Issues ──────────────────────────────────────────────────────────
+
+    pub async fn upsert_issue(
+        &self,
+        project_id: &str,
+        fingerprint: &str,
+        title: &str,
+        culprit: Option<&str>,
+        level: Level,
+    ) -> Result<Issue> {
+        let level_str = level_to_str(level);
+
+        let existing = sqlx::query_as::<_, IssueRow>(
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE project_id = ? AND fingerprint = ?",
+        )
+        .bind(project_id)
+        .bind(fingerprint)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let new_count = row.count + 1;
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE issues SET count = ?, last_seen = ?, level = ? WHERE id = ?")
+                .bind(new_count)
+                .bind(&now)
+                .bind(&level_str)
+                .bind(&row.id)
+                .execute(&self.pool)
+                .await?;
+
+            Ok(Issue {
+                id: row.id,
+                project_id: row.project_id,
+                fingerprint: row.fingerprint,
+                title: row.title,
+                culprit: row.culprit,
+                status: str_to_status(&row.status),
+                level,
+                count: new_count,
+                user_count: row.user_count,
+                first_seen: row.first_seen,
+                last_seen: now,
+            })
+        } else {
+            let id = new_id();
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, 'unresolved', ?, 1, 0, ?, ?)",
+            )
+            .bind(&id)
+            .bind(project_id)
+            .bind(fingerprint)
+            .bind(title)
+            .bind(culprit)
+            .bind(&level_str)
+            .bind(&now)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+
+            Ok(Issue {
+                id,
+                project_id: project_id.to_string(),
+                fingerprint: fingerprint.to_string(),
+                title: title.to_string(),
+                culprit: culprit.map(|s| s.to_string()),
+                status: IssueStatus::Unresolved,
+                level,
+                count: 1,
+                user_count: 0,
+                first_seen: now.clone(),
+                last_seen: now,
+            })
+        }
+    }
+
+    pub async fn get_issue(&self, issue_id: &str) -> Result<Option<Issue>> {
+        let row = sqlx::query_as::<_, IssueRow>(
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE id = ?",
+        )
+        .bind(issue_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn list_issues(
+        &self,
+        project_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Issue>> {
+        let rows = sqlx::query_as::<_, IssueRow>(
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE project_id = ? ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn set_issue_status(&self, issue_id: &str, status: IssueStatus) -> Result<()> {
+        let status_str = status_to_str(status);
+        sqlx::query("UPDATE issues SET status = ? WHERE id = ?")
+            .bind(&status_str)
+            .bind(issue_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Events ──────────────────────────────────────────────────────────
+
+    pub async fn insert_event(
+        &self,
+        issue_id: &str,
+        project_id: &str,
+        event_data: &str,
+    ) -> Result<String> {
+        let id = new_id();
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(&id)
+            .bind(issue_id)
+            .bind(project_id)
+            .bind(event_data)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(id)
+    }
+
+    pub async fn list_events(
+        &self,
+        issue_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<StoredEvent>> {
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT id, issue_id, project_id, data, received_at FROM events WHERE issue_id = ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(issue_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+}
+
+// ── Row types (sqlx mapping) ────────────────────────────────────────────
+
+#[derive(sqlx::FromRow)]
+struct ProjectRow {
+    id: String,
+    slug: String,
+    name: String,
+    dsn: String,
+    created_at: String,
+}
+
+impl From<ProjectRow> for Project {
+    fn from(r: ProjectRow) -> Self {
+        Self { id: r.id, slug: r.slug, name: r.name, dsn: r.dsn, created_at: r.created_at }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct IssueRow {
+    id: String,
+    project_id: String,
+    fingerprint: String,
+    title: String,
+    culprit: Option<String>,
+    status: String,
+    level: String,
+    count: i64,
+    user_count: i64,
+    first_seen: String,
+    last_seen: String,
+}
+
+impl From<IssueRow> for Issue {
+    fn from(r: IssueRow) -> Self {
+        Self {
+            id: r.id,
+            project_id: r.project_id,
+            fingerprint: r.fingerprint,
+            title: r.title,
+            culprit: r.culprit,
+            status: str_to_status(&r.status),
+            level: str_to_level(&r.level),
+            count: r.count,
+            user_count: r.user_count,
+            first_seen: r.first_seen,
+            last_seen: r.last_seen,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct EventRow {
+    id: String,
+    issue_id: String,
+    project_id: String,
+    data: String,
+    received_at: String,
+}
+
+impl From<EventRow> for StoredEvent {
+    fn from(r: EventRow) -> Self {
+        Self {
+            id: r.id,
+            issue_id: r.issue_id,
+            project_id: r.project_id,
+            data: serde_json::from_str(&r.data).unwrap_or(serde_json::Value::Null),
+            received_at: r.received_at,
+        }
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+fn level_to_str(level: Level) -> String {
+    serde_json::to_string(&level).unwrap().trim_matches('"').to_string()
+}
+
+fn str_to_level(s: &str) -> Level {
+    serde_json::from_str(&format!("\"{s}\"")).unwrap_or(Level::Error)
+}
+
+fn status_to_str(status: IssueStatus) -> String {
+    serde_json::to_string(&status).unwrap().trim_matches('"').to_string()
+}
+
+fn str_to_status(s: &str) -> IssueStatus {
+    serde_json::from_str(&format!("\"{s}\"")).unwrap_or(IssueStatus::Unresolved)
+}

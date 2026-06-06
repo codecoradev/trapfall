@@ -160,8 +160,8 @@ pub struct Issue {
     #[serde(default)]
     pub status: IssueStatus,
     pub level: Level,
-    pub count: u64,
-    pub user_count: u64,
+    pub count: i64,
+    pub user_count: i64,
     pub first_seen: String,
     pub last_seen: String,
 }
@@ -200,7 +200,7 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListResponse<T> {
     pub data: Vec<T>,
-    pub total: u64,
+    pub total: i64,
     pub page: u32,
     pub per_page: u32,
 }
@@ -322,9 +322,9 @@ mod tests {
 
     #[test]
     fn serde_list_response() {
-        let resp = ListResponse { data: vec![1u64, 2, 3], total: 3, page: 1, per_page: 20 };
+        let resp = ListResponse { data: vec![1i64, 2, 3], total: 3, page: 1, per_page: 20 };
         let json = serde_json::to_string(&resp).unwrap();
-        let back: ListResponse<u64> = serde_json::from_str(&json).unwrap();
+        let back: ListResponse<i64> = serde_json::from_str(&json).unwrap();
         assert_eq!(back.data.len(), 3);
         assert_eq!(back.total, 3);
     }
