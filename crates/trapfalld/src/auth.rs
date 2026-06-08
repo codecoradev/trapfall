@@ -134,10 +134,7 @@ async fn login(
             );
             Ok((StatusCode::OK, [("set-cookie".to_string(), cookie)], Json(LoginResponse { user: user_info })))
         }
-        Err(AuthError::LockedOut) => {
-            Err((StatusCode::TOO_MANY_REQUESTS, Json(AuthErrorJson { error: "Invalid credentials".into() })))
-        }
-        Err(AuthError::InvalidCredentials) => {
+        Err(AuthError::LockedOut | AuthError::InvalidCredentials) => {
             Err((StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "Invalid credentials".into() })))
         }
         Err(AuthError::Internal) => {

@@ -56,7 +56,8 @@ fn make_state(pool: SqlitePool, rate_limiter: RateLimiter) -> AppState {
         let mut rx = rx;
         while rx.recv().await.is_some() {}
     });
-    let config = Config { db_path: PathBuf::from(":memory:"), listen_addr: "0.0.0.0:9090".into() };
+    let config =
+        Config { db_path: PathBuf::from(":memory:"), listen_addr: "0.0.0.0:9090".into(), cors_origins: Vec::new() };
     AppState { pool, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
 }
 

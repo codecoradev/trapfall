@@ -25,8 +25,7 @@ impl Store {
     pub async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
         let id = new_id();
         let dsn = generate_dsn();
-        // Extract DSN key from DSN URL: https://{key}@host/path
-        let dsn_key = dsn.split('@').next().unwrap_or("").trim_start_matches("https://").to_string();
+        let dsn_key = extract_dsn_key(&dsn);
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&id)
@@ -72,8 +71,10 @@ impl Store {
 
     pub async fn rotate_dsn(&self, project_id: &str) -> Result<String> {
         let new_dsn = generate_dsn();
-        sqlx::query("UPDATE projects SET dsn = ? WHERE id = ?")
+        let new_dsn_key = extract_dsn_key(&new_dsn);
+        sqlx::query("UPDATE projects SET dsn = ?, dsn_key = ? WHERE id = ?")
             .bind(&new_dsn)
+            .bind(&new_dsn_key)
             .bind(project_id)
             .execute(&self.pool)
             .await?;
@@ -514,6 +515,11 @@ impl From<AlertRuleRow> for trapfall_proto::AlertRule {
     }
 }
 
+/// Extract DSN key from DSN URL: `https://{key}@host/path` → `{key}`.
+fn extract_dsn_key(dsn: &str) -> String {
+    dsn.split('@').next().unwrap_or("").trim_start_matches("https://").to_string()
+}
+
 fn level_to_str(level: Level) -> String {
     serde_json::to_string(&level).unwrap().trim_matches('"').to_string()
 }
@@ -528,4 +534,48 @@ fn status_to_str(status: IssueStatus) -> String {
 
 fn str_to_status(s: &str) -> IssueStatus {
     serde_json::from_str(&format!("\"{s}\"")).unwrap_or(IssueStatus::Unresolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_dsn_key() {
+        assert_eq!(extract_dsn_key("https://abc123@trapfall.example.com/1"), "abc123");
+        assert_eq!(extract_dsn_key("https://key456@localhost:9090/42"), "key456");
+        // No @ → split returns whole string, trim_start_matches strips nothing
+        assert_eq!(extract_dsn_key("malformed"), "malformed");
+        assert_eq!(extract_dsn_key(""), "");
+    }
+
+    #[tokio::test]
+    async fn test_rotate_dsn_updates_dsn_key() {
+        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
+        crate::run_migrations(&pool).await.unwrap();
+        let store = Store::new(pool);
+
+        let project = store.create_project("test", "Test Project").await.unwrap();
+        let original_dsn = project.dsn.clone();
+        let original_key = extract_dsn_key(&original_dsn);
+
+        // Verify original dsn_key matches
+        let found = store.get_project_by_dsn_key(&original_key).await.unwrap();
+        assert!(found.is_some());
+
+        // Rotate
+        let new_dsn = store.rotate_dsn(&project.id).await.unwrap();
+        assert_ne!(new_dsn, original_dsn);
+
+        let new_key = extract_dsn_key(&new_dsn);
+        assert_ne!(new_key, original_key);
+
+        // Old key should NOT find the project anymore
+        let old_lookup = store.get_project_by_dsn_key(&original_key).await.unwrap();
+        assert!(old_lookup.is_none(), "Old DSN key should be revoked after rotation");
+
+        // New key should find the project
+        let new_lookup = store.get_project_by_dsn_key(&new_key).await.unwrap();
+        assert!(new_lookup.is_some(), "New DSN key should work after rotation");
+    }
 }
