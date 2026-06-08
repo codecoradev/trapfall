@@ -32,10 +32,9 @@ rust-embed = { workspace = true }
 mime_guess = { workspace = true }
 uuid = { workspace = true }
 tower = { workspace = true }
-http-body-util = "0.1"
+http-body-util = { workspace = true }
 reqwest = { workspace = true }
 url = "2"
 
 [dev-dependencies]
 tower = { workspace = true }
-http-body-util = "0.1"
