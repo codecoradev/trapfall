@@ -37,27 +37,37 @@ pub async fn ws_handler(State(state): State<crate::server::AppState>, ws: WebSoc
 
 async fn handle_socket(mut socket: WebSocket, hub: WsHub) {
     let mut rx = hub.subscribe();
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
     loop {
-        match rx.recv().await {
-            Ok(msg) => {
-                let json = match serde_json::to_string(&*msg) {
-                    Ok(j) => j,
-                    Err(e) => {
-                        tracing::warn!("WS serialize error: {e}");
+        tokio::select! {
+            msg_result = rx.recv() => {
+                match msg_result {
+                    Ok(msg) => {
+                        let json = match serde_json::to_string(&*msg) {
+                            Ok(j) => j,
+                            Err(e) => {
+                                tracing::warn!("WS serialize error: {e}");
+                                continue;
+                            }
+                        };
+                        if socket.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("WS client lagged {n} messages");
                         continue;
                     }
-                };
-                if socket.send(Message::Text(json.into())).await.is_err() {
-                    break;
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
                 }
             }
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::debug!("WS client lagged {n} messages");
-                continue;
-            }
-            Err(broadcast::error::RecvError::Closed) => {
-                break;
+            _ = ping_interval.tick() => {
+                if socket.send(Message::Ping(vec![].into())).await.is_err() {
+                    break; // Client disconnected
+                }
             }
         }
     }

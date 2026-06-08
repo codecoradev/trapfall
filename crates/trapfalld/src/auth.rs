@@ -138,8 +138,11 @@ async fn login(
     match store.authenticate(&req.email, &req.password, ip).await {
         Ok((session, user_info)) => {
             let cookie = format!(
-                "{}={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
-                SESSION_COOKIE, session.token, COOKIE_MAX_AGE
+                "{}={}; HttpOnly; {}; SameSite=Strict; Path=/; Max-Age={}",
+                SESSION_COOKIE,
+                session.token,
+                state.config.cookie_secure_flag(),
+                COOKIE_MAX_AGE
             );
             Ok((StatusCode::OK, [("set-cookie".to_string(), cookie)], Json(LoginResponse { user: user_info })))
         }
@@ -160,7 +163,11 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
         let _ = store.delete_session(&token).await;
     }
 
-    let clear_cookie = format!("{}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0", SESSION_COOKIE);
+    let clear_cookie = format!(
+        "{}=; HttpOnly; {}; SameSite=Strict; Path=/; Max-Age=0",
+        SESSION_COOKIE,
+        state.config.cookie_secure_flag()
+    );
     (StatusCode::OK, [("set-cookie".to_string(), clear_cookie)])
 }
 

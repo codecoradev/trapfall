@@ -7,6 +7,8 @@ use sqlx::{Row, SqlitePool};
 use trapfall_proto::{Issue, Level};
 
 /// Search issues by substring query with optional filters.
+///
+/// LIKE wildcards (`%`, `_`) in the query are escaped to prevent unexpected matches.
 pub async fn search_issues(
     pool: &SqlitePool,
     query: &str,
@@ -16,11 +18,11 @@ pub async fn search_issues(
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<Vec<Issue>> {
-    let pattern = format!("%{query}%");
+    let pattern = format!("%{}%", escape_like(query));
 
     // Build with dynamic filters using raw query
     let sql_base = "SELECT id, project_id, fingerprint, title, culprit, status, level, \
-         count, user_count, first_seen, last_seen FROM issues WHERE (title LIKE ? OR culprit LIKE ?)";
+         count, user_count, first_seen, last_seen FROM issues WHERE (title LIKE ? ESCAPE '!' OR culprit LIKE ? ESCAPE '!')";
 
     let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
     let mut conds: Vec<String> = Vec::new();
@@ -86,6 +88,8 @@ pub async fn search_issues(
 }
 
 /// Count issues matching a search query with optional filters.
+///
+/// Uses the same WHERE clause as `search_issues` for accurate totals.
 pub async fn count_search_issues(
     pool: &SqlitePool,
     query: &str,
@@ -93,9 +97,9 @@ pub async fn count_search_issues(
     status: Option<&str>,
     level: Option<&str>,
 ) -> anyhow::Result<i64> {
-    let pattern = format!("%{query}%");
+    let pattern = format!("%{}%", escape_like(query));
 
-    let sql_base = "SELECT COUNT(*) FROM issues WHERE (title LIKE ? OR culprit LIKE ?)";
+    let sql_base = "SELECT COUNT(*) FROM issues WHERE (title LIKE ? ESCAPE '!' OR culprit LIKE ? ESCAPE '!')";
 
     let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
     let mut conds: Vec<String> = Vec::new();
@@ -123,4 +127,10 @@ pub async fn count_search_issues(
 
     let count = q.fetch_one(pool).await?;
     Ok(count)
+}
+
+/// Escape SQLite LIKE wildcard characters (`%`, `_`, `!`).
+/// Uses `!` as ESCAPE character.
+fn escape_like(input: &str) -> String {
+    input.replace('!', "!!").replace('%', "!%").replace('_', "!_")
 }

@@ -56,8 +56,12 @@ fn make_state(pool: SqlitePool, rate_limiter: RateLimiter) -> AppState {
         let mut rx = rx;
         while rx.recv().await.is_some() {}
     });
-    let config =
-        Config { db_path: PathBuf::from(":memory:"), listen_addr: "0.0.0.0:9090".into(), cors_origins: Vec::new() };
+    let config = Config {
+        db_path: PathBuf::from(":memory:"),
+        listen_addr: "0.0.0.0:9090".into(),
+        cors_origins: Vec::new(),
+        secure_cookie: false,
+    };
     AppState { pool, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
 }
 
@@ -262,7 +266,8 @@ async fn login_returns_session_cookie() {
     let cookie = resp.headers().get("set-cookie").unwrap().to_str().unwrap();
     assert!(cookie.contains("trapfall_session="));
     assert!(cookie.contains("HttpOnly"));
-    assert!(cookie.contains("Secure"));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Strict"));
     assert!(cookie.contains("SameSite=Strict"));
 }
 

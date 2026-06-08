@@ -51,10 +51,9 @@ impl Store {
     }
 
     pub async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
-        let pattern = format!("https://{sentry_key}@%");
         let row =
-            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn LIKE ?")
-                .bind(pattern)
+            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn_key = ?")
+                .bind(sentry_key)
                 .fetch_optional(&self.pool)
                 .await?;
 
