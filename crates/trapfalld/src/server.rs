@@ -109,8 +109,17 @@ async fn ingest_envelope(
 
     // Validate DSN key from Authorization header
     let store = Store::new(state.pool.clone());
-    let dsn_key =
-        headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ").or(Some(v)));
+    // Extract DSN key: try X-Sentry-Auth header first, then Authorization Bearer
+    let dsn_key = headers
+        .get("x-sentry-auth")
+        .and_then(|v| v.to_str().ok())
+        .and_then(trapfall_ingest::extract_sentry_key)
+        .or_else(|| {
+            headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer ").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+        });
     let dsn_key = match dsn_key {
         Some(k) => k,
         None => return StatusCode::UNAUTHORIZED,
@@ -121,7 +130,7 @@ async fn ingest_envelope(
         Ok(Some(p)) => p,
         _ => return StatusCode::NOT_FOUND,
     };
-    match store.get_project_by_dsn_key(dsn_key).await {
+    match store.get_project_by_dsn_key(&dsn_key).await {
         Ok(Some(p)) if p.id == project.id => {}
         _ => return StatusCode::UNAUTHORIZED,
     }
@@ -173,6 +182,8 @@ struct ListIssuesQuery {
     page: u32,
     #[serde(default = "default_per_page")]
     per_page: u32,
+    status: Option<String>,
+    level: Option<String>,
 }
 
 fn default_page() -> u32 {
@@ -199,8 +210,11 @@ async fn list_issues(
     let limit = query.per_page.min(100) as i64;
     let offset = ((query.page - 1) * limit as u32) as i64;
 
-    let total = store.count_issues(&project.id, None, None).await.unwrap_or(0);
-    let issues = store.list_issues(&project.id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let total = store.count_issues(&project.id, query.status.as_deref(), query.level.as_deref()).await.unwrap_or(0);
+    let issues = store
+        .list_issues_filtered(&project.id, query.status.as_deref(), query.level.as_deref(), limit, offset)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(ListResponse { data: issues, total, page: query.page, per_page: limit as u32 }))
 }
@@ -367,7 +381,7 @@ async fn search_issues(
     };
 
     let limit = query.limit.unwrap_or(50).min(100);
-    let page = query.page.unwrap_or(0);
+    let page = query.page.unwrap_or(0).max(0);
     let offset = page * limit;
 
     let total = trapfall_search::count_search_issues(

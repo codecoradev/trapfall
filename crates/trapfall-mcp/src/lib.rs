@@ -332,7 +332,7 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_
                         "id": p.id,
                         "slug": p.slug,
                         "name": p.name,
-                        "dsn": p.dsn,
+                        "dsn": mask_dsn(&p.dsn),
                     })
                 })
                 .collect();
@@ -348,7 +348,7 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_
                 "id": project.id,
                 "slug": project.slug,
                 "name": project.name,
-                "dsn": project.dsn,
+                "dsn": mask_dsn(&project.dsn),
             })).unwrap_or_default() }] }))
         }
         "get_project_stats" => {
@@ -441,5 +441,20 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_
             Ok(json!({ "content": [{ "type": "text", "text": format!("Healthy (db={})", ok) }] }))
         }
         _ => Err(format!("Unknown tool: {name}")),
+    }
+}
+
+/// Mask DSN for MCP responses: show only first 8 and last 4 chars of key.
+fn mask_dsn(dsn: &str) -> String {
+    // DSN format: https://<key>@<host>/<project>
+    let at_pos = match dsn.find('@') {
+        Some(p) => p,
+        None => return "***masked***".to_string(),
+    };
+    let key = &dsn[..at_pos].trim_start_matches("https://");
+    if key.len() <= 12 {
+        format!("https://***@{}", &dsn[at_pos + 1..])
+    } else {
+        format!("https://{}...{}@{}", &key[..8], &key[key.len() - 4..], &dsn[at_pos + 1..])
     }
 }

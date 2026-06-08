@@ -137,6 +137,7 @@ async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
         db_path: std::path::PathBuf::from("trapfall.db"),
         listen_addr: listen.clone(),
         cors_origins: Vec::new(),
+        secure_cookie: true,
     };
 
     // Channel: ingest → digest

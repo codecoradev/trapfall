@@ -22,7 +22,7 @@ pub async fn run_retention(pool: SqlitePool, retention_days: Option<i64>) {
     }
 }
 
-/// Delete events older than `days` days, then clean up orphan issues.
+/// Delete events older than `days` days, then clean up orphan issues and stale auth attempts.
 async fn purge_old_events(pool: &SqlitePool, days: i64) -> Result<(), sqlx::Error> {
     // Delete old events
     let result = sqlx::query("DELETE FROM events WHERE received_at < datetime('now', ?)")
@@ -34,6 +34,9 @@ async fn purge_old_events(pool: &SqlitePool, days: i64) -> Result<(), sqlx::Erro
 
     // Single query: delete issues with zero remaining events (orphans after event purge)
     sqlx::query("DELETE FROM issues WHERE id NOT IN (SELECT DISTINCT issue_id FROM events)").execute(pool).await.ok(); // best-effort
+
+    // Cleanup stale auth attempts (older than 30 days)
+    sqlx::query("DELETE FROM auth_attempts WHERE created_at < datetime('now', '-30 days')").execute(pool).await.ok(); // best-effort
 
     if deleted > 0 {
         tracing::info!("Retention purge: deleted {deleted} events older than {days} days");
