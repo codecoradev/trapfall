@@ -21,31 +21,7 @@
 	let error = $state('');
 	let liveIndicator = $state(false);
 
-	const levelColors: Record<string, string> = {
-		fatal: 'bg-red-500/15 text-red-500',
-		error: 'bg-orange-500/15 text-orange-500',
-		warning: 'bg-yellow-500/15 text-yellow-500',
-		info: 'bg-blue-500/15 text-blue-500',
-		debug: 'bg-gray-500/15 text-gray-400',
-		trace: 'bg-gray-500/15 text-gray-500'
-	};
-
-	const statusColors: Record<string, string> = {
-		unresolved: 'bg-red-500/15 text-red-400',
-		resolved: 'bg-emerald-500/15 text-emerald-400',
-		ignored: 'bg-gray-500/15 text-gray-400',
-		regression: 'bg-orange-500/15 text-orange-400'
-	};
-
-	function timeAgo(dateStr: string): string {
-		const d = new Date(dateStr);
-		const now = new Date();
-		const diff = Math.floor((now.getTime() - d.getTime()) / 1000);
-		if (diff < 60) return `${diff}s ago`;
-		if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-		if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-		return `${Math.floor(diff / 86400)}d ago`;
-	}
+	import { levelTextClass, statusTextClass, timeAgo } from '$lib/utils';
 
 	let wsUnsub: (() => void) | null = $state(null);
 
@@ -146,7 +122,7 @@
 							onclick={() => goto(`/issues/${issue.id}`)}
 						>
 							<TableCell>
-								<Badge variant="outline" class={levelColors[issue.level] || ''}>
+								<Badge variant="outline" class={levelTextClass(issue.level)}>
 									{issue.level}
 								</Badge>
 							</TableCell>
@@ -157,7 +133,7 @@
 							<TableCell>{issue.count}</TableCell>
 							<TableCell>{issue.user_count}</TableCell>
 							<TableCell>
-								<Badge variant="outline" class={statusColors[issue.status] || ''}>
+								<Badge variant="outline" class={statusTextClass(issue.status)}>
 									{issue.status}
 								</Badge>
 							</TableCell>

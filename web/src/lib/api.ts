@@ -221,6 +221,10 @@ export interface CreateAlertRule {
 	cooldown_seconds?: number;
 }
 
+// ── Standalone API Functions (not yet on ApiClient) ─────────────────────
+// These use raw fetch to match the existing auth pattern.
+// TODO: migrate into ApiClient class methods.
+
 export async function listAlertRules(projectSlug: string): Promise<AlertRule[]> {
 	const res = await fetch(`${API_BASE}/0/projects/${projectSlug}/rules`);
 	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }

@@ -20,9 +20,26 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install cora
+    - name: Install cora (with retry)
       shell: bash
-      run: curl -fsSL https://raw.githubusercontent.com/codecoradev/cora-cli/main/install.sh | sh
+      run: |
+        set -e
+        # Try install script with retry (up to 3 attempts)
+        for i in 1 2 3; do
+          echo "Attempt $i: Installing cora via curl..."
+          if curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/codecoradev/cora-cli/main/install.sh | sh; then
+            echo "✅ cora installed successfully"
+            cora --version
+            exit 0
+          fi
+          echo "⚠️ Attempt $i failed, waiting 10s before retry..."
+          sleep 10
+        done
+
+        # Fallback: install via cargo
+        echo "⚠️ Curl install failed after 3 attempts. Falling back to cargo install..."
+        cargo install cora-cli --version 0.4.6 --locked
+        cora --version
 
     - name: Run cora review
       shell: bash

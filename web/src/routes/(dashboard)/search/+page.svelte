@@ -3,8 +3,7 @@
 	import { api, type Issue, type Project } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-
-	type BadgeVariant = 'destructive' | 'secondary' | 'outline' | 'default';
+	import { levelColor, statusColor, formatTime } from '$lib/utils';
 
 	let projects = $state<Project[]>([]);
 	let selectedSlug = $state('');
@@ -60,32 +59,6 @@
 	function debouncedSearch() {
 		clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(doSearch, 300);
-	}
-
-	function levelColor(level: string): BadgeVariant {
-		const map: Record<string, BadgeVariant> = {
-			fatal: 'destructive',
-			error: 'destructive',
-			warning: 'secondary',
-			info: 'outline',
-			debug: 'outline'
-		};
-		return map[level] ?? 'outline';
-	}
-
-	function statusColor(status: string): BadgeVariant {
-		const map: Record<string, BadgeVariant> = {
-			unresolved: 'destructive',
-			resolved: 'outline',
-			ignored: 'secondary'
-		};
-		return map[status] ?? 'default';
-	}
-
-	function formatTime(iso: string): string {
-		if (!iso) return '';
-		const d = new Date(iso);
-		return d.toLocaleString();
 	}
 </script>
 
