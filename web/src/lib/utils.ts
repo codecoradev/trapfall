@@ -1,9 +1,24 @@
-/**
- * Shared UI utilities — badge colors, time formatting.
- * Single source of truth for level/status color mappings and time formatting.
- */
+import { type ClassValue, clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+import type { Snippet } from 'svelte';
+
+// ── Shadcn UI helpers ─────────────────────────────────────────────────
+
+export function cn(...inputs: ClassValue[]) {
+	return twMerge(clsx(inputs));
+}
+
+export type WithoutChildren<T> = T extends { children?: Snippet } ? Omit<T, 'children'> : T;
+export type WithElementRef<T, U extends HTMLElement = HTMLElement> = WithoutChildren<T> & {
+	ref?: U | null;
+	children?: Snippet;
+};
+
+// ── Badge variant types ───────────────────────────────────────────────
 
 export type BadgeVariant = 'destructive' | 'secondary' | 'outline' | 'default';
+
+// ── Badge color mapping ───────────────────────────────────────────────
 
 /**
  * Map error level to badge variant for consistent coloring across the dashboard.
@@ -31,6 +46,8 @@ export function statusColor(status: string): BadgeVariant {
 	return map[status] ?? 'default';
 }
 
+// ── Tailwind text color mapping ───────────────────────────────────────
+
 /**
  * Map error level to Tailwind text color class.
  */
@@ -57,6 +74,8 @@ export function statusTextClass(status: string): string {
 	};
 	return map[status] ?? 'text-gray-500';
 }
+
+// ── Time formatting ───────────────────────────────────────────────────
 
 /**
  * Format an ISO date string to locale string.

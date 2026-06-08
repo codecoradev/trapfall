@@ -23,7 +23,7 @@ RUN cp /app/target/release/trapfalld /app/target/release/trapfall || true
 FROM node:20-slim AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci
 COPY web/ .
 RUN npm run build
 
