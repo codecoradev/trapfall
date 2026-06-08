@@ -293,7 +293,7 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_
         }
         "search_issues" => {
             let query = args.get("query").and_then(|v| v.as_str()).ok_or("missing query")?;
-            let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+            let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
 
             let project_id = if let Some(slug) = args.get("project_slug").and_then(|v| v.as_str()) {
                 store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.map(|p| p.id)
@@ -411,7 +411,7 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_
         }
         "list_events" => {
             let issue_id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
-            let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+            let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
             let events = store.list_events(issue_id, limit, 0).await.map_err(|e| e.to_string())?;
             let list: Vec<Value> = events
                 .iter()

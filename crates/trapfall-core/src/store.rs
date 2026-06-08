@@ -520,19 +520,47 @@ fn extract_dsn_key(dsn: &str) -> String {
 }
 
 fn level_to_str(level: Level) -> String {
-    serde_json::to_string(&level).unwrap().trim_matches('"').to_string()
+    match level {
+        Level::Fatal => "fatal",
+        Level::Error => "error",
+        Level::Warning => "warning",
+        Level::Info => "info",
+        Level::Debug => "debug",
+        Level::Trace => "trace",
+    }
+    .to_string()
 }
 
 fn str_to_level(s: &str) -> Level {
-    serde_json::from_str(&format!("\"{s}\"")).unwrap_or(Level::Error)
+    match s {
+        "fatal" => Level::Fatal,
+        "error" => Level::Error,
+        "warning" => Level::Warning,
+        "info" => Level::Info,
+        "debug" => Level::Debug,
+        "trace" => Level::Trace,
+        _ => Level::Error,
+    }
 }
 
 fn status_to_str(status: IssueStatus) -> String {
-    serde_json::to_string(&status).unwrap().trim_matches('"').to_string()
+    match status {
+        IssueStatus::Unresolved => "unresolved",
+        IssueStatus::Resolved => "resolved",
+        IssueStatus::Ignored => "ignored",
+        IssueStatus::Regression => "regression",
+    }
+    .to_string()
 }
 
 fn str_to_status(s: &str) -> IssueStatus {
-    serde_json::from_str(&format!("\"{s}\"")).unwrap_or(IssueStatus::Unresolved)
+    match s {
+        "unresolved" => IssueStatus::Unresolved,
+        "resolved" => IssueStatus::Resolved,
+        "ignored" => IssueStatus::Ignored,
+        "regression" => IssueStatus::Regression,
+        _ => IssueStatus::Unresolved,
+    }
 }
 
 #[cfg(test)]
