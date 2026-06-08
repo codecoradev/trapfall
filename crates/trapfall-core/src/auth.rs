@@ -191,6 +191,18 @@ impl Store {
         Ok(user)
     }
 
+    /// Update user password.
+    pub async fn update_password(&self, user_id: &str, new_password: &str) -> Result<()> {
+        validate_password(new_password).map_err(|e| anyhow::anyhow!(e))?;
+        let hash = hash_password(new_password)?;
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(&hash)
+            .bind(user_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
     // ── Sessions (#20) ─────────────────────────────────────────────────
 
     /// Create a new session for a user.
@@ -426,6 +438,29 @@ mod tests {
         // 6th attempt should be locked out
         let result = store.authenticate("lock@test.com", "password123", "127.0.0.1").await;
         assert!(matches!(result, Err(AuthError::LockedOut)));
+    }
+
+    #[tokio::test]
+    async fn test_update_password() {
+        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
+        crate::run_migrations(&pool).await.unwrap();
+        let store = Store::new(pool);
+
+        store.create_user("pw@test.com", "PW Test", "oldpassword").await.unwrap();
+
+        // Change password
+        store
+            .update_password(&store.get_user_by_email("pw@test.com").await.unwrap().unwrap().id, "newpassword1")
+            .await
+            .unwrap();
+
+        // Old password should fail
+        let result = store.authenticate("pw@test.com", "oldpassword", "127.0.0.1").await;
+        assert!(result.is_err());
+
+        // New password should work
+        let result = store.authenticate("pw@test.com", "newpassword1", "127.0.0.1").await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

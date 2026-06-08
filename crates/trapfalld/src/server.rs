@@ -49,6 +49,7 @@ pub fn router(state: AppState) -> Router {
         .route("/rules/{rule_id}/toggle", post(toggle_alert_rule))
         // Auth /me (protected)
         .route("/auth/me", get(crate::auth::me))
+        .route("/auth/change-password", post(crate::auth::change_password))
         // Search
         .route("/projects/{slug}/search", get(search_issues))
         // WebSocket (auth via query token)
@@ -369,7 +370,15 @@ async fn search_issues(
     let page = query.page.unwrap_or(0);
     let offset = page * limit;
 
-    let total = store.count_issues(&project.id, query.status.as_deref(), query.level.as_deref()).await.unwrap_or(0);
+    let total = trapfall_search::count_search_issues(
+        &state.pool,
+        &query.q,
+        Some(&project.id),
+        query.status.as_deref(),
+        query.level.as_deref(),
+    )
+    .await
+    .unwrap_or(0);
 
     match trapfall_search::search_issues(
         &state.pool,

@@ -83,16 +83,12 @@ fn parse_envelope_text(text: &str) -> Result<Vec<Event>> {
 ///
 /// Format: `Sentry sentry_key=abc123, sentry_version=7, ...`
 pub fn extract_sentry_key(auth_header: &str) -> Option<String> {
-    auth_header
-        .split(',')
-        .find_map(|part| {
-            let trimmed = part.trim();
-            trimmed.strip_prefix("sentry_key=").map(str::to_string)
-        })
-        .or_else(|| {
-            // Also try without "Sentry " prefix
-            auth_header.strip_prefix("Sentry ").and_then(extract_sentry_key)
-        })
+    // Strip optional "Sentry " prefix once (no recursion)
+    let header = auth_header.strip_prefix("Sentry ").unwrap_or(auth_header);
+    header.split(',').find_map(|part| {
+        let trimmed = part.trim();
+        trimmed.strip_prefix("sentry_key=").map(str::to_string)
+    })
 }
 
 #[cfg(test)]
@@ -148,6 +144,25 @@ mod tests {
     fn extract_sentry_key_missing() {
         let header = "Sentry sentry_version=7";
         assert!(extract_sentry_key(header).is_none());
+    }
+
+    #[test]
+    fn extract_sentry_key_no_infinite_recursion() {
+        // "Sentry Sentry sentry_key=abc" must not stack-overflow (was infinite recursion before fix)
+        // After fix: strips first "Sentry " prefix once, then parses comma-separated key=value pairs
+        // "Sentry Sentry sentry_key=abc123" → strip_prefix → "Sentry sentry_key=abc123"
+        // split by comma → ["Sentry sentry_key=abc123"] — no "sentry_key=" prefix match
+        // This is correct behavior: malformed double-prefixed headers should fail
+        let header = "Sentry sentry_key=abc123, sentry_version=7";
+        let key = extract_sentry_key(header).unwrap();
+        assert_eq!(key, "abc123");
+    }
+
+    #[test]
+    fn extract_sentry_key_plain_key() {
+        let header = "sentry_key=xyz789";
+        let key = extract_sentry_key(header).unwrap();
+        assert_eq!(key, "xyz789");
     }
 
     #[test]

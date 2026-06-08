@@ -32,21 +32,8 @@ async fn purge_old_events(pool: &SqlitePool, days: i64) -> Result<(), sqlx::Erro
 
     let deleted = result.rows_affected();
 
-    // Clean up issues with zero remaining events (orphan issues)
-    sqlx::query(
-        "DELETE FROM issues WHERE id NOT IN (SELECT DISTINCT issue_id FROM events) AND id NOT IN (SELECT DISTINCT issue_id FROM events WHERE 1=0)",
-    )
-    .execute(pool)
-    .await
-    .ok(); // best-effort
-
-    // Simpler orphan cleanup: issues with count mismatch
-    sqlx::query(
-        "DELETE FROM issues WHERE count = 0 OR count != (SELECT COUNT(*) FROM events WHERE events.issue_id = issues.id)",
-    )
-    .execute(pool)
-    .await
-    .ok(); // best-effort
+    // Single query: delete issues with zero remaining events (orphans after event purge)
+    sqlx::query("DELETE FROM issues WHERE id NOT IN (SELECT DISTINCT issue_id FROM events)").execute(pool).await.ok(); // best-effort
 
     if deleted > 0 {
         tracing::info!("Retention purge: deleted {deleted} events older than {days} days");

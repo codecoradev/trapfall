@@ -33,6 +33,12 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 #[derive(Serialize)]
 pub struct SetupResponse {
     pub user: UserInfo,
@@ -72,7 +78,10 @@ pub fn auth_routes() -> Router<AppState> {
 
 /// Build auth-protected routes (require session cookie).
 pub fn protected_routes(state: AppState) -> Router<AppState> {
-    Router::new().route("/api/auth/me", get(me)).layer(middleware::from_fn_with_state(state, require_auth))
+    Router::new()
+        .route("/api/auth/me", get(me))
+        .route("/api/auth/change-password", post(change_password))
+        .layer(middleware::from_fn_with_state(state, require_auth))
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────
@@ -158,6 +167,37 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
 /// GET /auth/me — Get current user info (protected).
 pub async fn me(user: AuthenticatedUser) -> Json<UserInfo> {
     Json(user.0)
+}
+
+/// POST /api/auth/change-password — Change password for authenticated user.
+pub async fn change_password(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<StatusCode, (StatusCode, Json<AuthErrorJson>)> {
+    let store = Store::new(state.pool);
+
+    // Verify current password
+    let db_user = store
+        .get_user_by_id(&user.0.id)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: "Internal error".into() })))?
+        .ok_or((StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "User not found".into() })))?;
+
+    if !trapfall_core::auth::verify_password(&req.current_password, &db_user.password_hash) {
+        return Err((StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "Current password is incorrect".into() })));
+    }
+
+    // Validate and update
+    trapfall_core::auth::validate_password(&req.new_password)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(AuthErrorJson { error: e })))?;
+
+    store
+        .update_password(&db_user.id, &req.new_password)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: e.to_string() })))?;
+
+    Ok(StatusCode::OK)
 }
 
 // ── Middleware ──────────────────────────────────────────────────────────
