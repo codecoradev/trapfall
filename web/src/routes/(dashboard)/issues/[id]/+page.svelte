@@ -12,14 +12,7 @@
 	let loading = $state(true);
 	let error = $state('');
 
-	const levelColors: Record<string, string> = {
-		fatal: 'bg-red-500/15 text-red-500',
-		error: 'bg-orange-500/15 text-orange-500',
-		warning: 'bg-yellow-500/15 text-yellow-500',
-		info: 'bg-blue-500/15 text-blue-500',
-		debug: 'bg-gray-500/15 text-gray-400',
-		trace: 'bg-gray-500/15 text-gray-500'
-	};
+	import { levelTextClass } from '$lib/utils';
 
 	const statusLabels: Record<string, string> = {
 		unresolved: 'Resolve',
@@ -73,7 +66,7 @@
 		<div class="flex items-start justify-between gap-4">
 			<div class="space-y-1">
 				<div class="flex items-center gap-2">
-					<Badge variant="outline" class={levelColors[issue.level] || ''}>
+					<Badge variant="outline" class={levelTextClass(issue.level)}>
 						{issue.level}
 					</Badge>
 					<h1 class="text-xl font-bold">{issue.title}</h1>

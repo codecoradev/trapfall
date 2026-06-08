@@ -91,6 +91,18 @@ class WsClient {
 		return this.connected;
 	}
 
+	/** Disconnect and clean up — call on component destroy. */
+	destroy() {
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		this.ws?.close();
+		this.ws = null;
+		this.connected = false;
+		this.listeners.clear();
+	}
+
 	private scheduleReconnect() {
 		if (this.reconnectTimer) return;
 		this.reconnectTimer = setTimeout(() => {
@@ -110,4 +122,12 @@ export function getWsClient(): WsClient {
 		client.connect();
 	}
 	return client;
+}
+
+/** Destroy the singleton WS client — call on app teardown or logout. */
+export function destroyWsClient() {
+	if (client) {
+		client.destroy();
+		client = null;
+	}
 }
