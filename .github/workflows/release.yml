@@ -156,7 +156,8 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-release, docker]
+    needs: [build-release]
+    if: always() && needs.build-release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
