@@ -1,33 +1,43 @@
-# ── Stage 1: Prepare recipe (dependency fingerprint only) ──────────────
-FROM rust:1.86-slim-bookworm AS chef
-RUN cargo install cargo-chef
-WORKDIR /app
-
-# ── Stage 2: Analyze dependencies (creates recipe.json) ───────────────
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-# ── Stage 3: Build dependencies (cached layer) ────────────────────────
-FROM chef AS builder
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Copy source and build application
-COPY . .
-RUN cargo build --release --bin trapfalld
-# Binary name matches [[bin]] name = "trapfall"
-RUN cp /app/target/release/trapfalld /app/target/release/trapfall || true
-
-# ── Stage 4: Build frontend ───────────────────────────────────────────
-FROM node:20-slim AS frontend
+# ── Stage 1: Build frontend ────────────────────────────────────────────
+FROM node:22-slim AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ .
 RUN npm run build
 
-# ── Stage 5: Minimal runtime ─────────────────────────────────────────
+# ── Stage 2: Build binary ─────────────────────────────────────────────
+FROM rust:1.86-slim-bookworm AS builder
+WORKDIR /app
+
+# Cache dependencies
+COPY Cargo.toml Cargo.lock ./
+COPY crates/trapfall-proto/Cargo.toml crates/trapfall-proto/Cargo.toml
+COPY crates/trapfall-core/Cargo.toml crates/trapfall-core/Cargo.toml
+COPY crates/trapfall-ingest/Cargo.toml crates/trapfall-ingest/Cargo.toml
+COPY crates/trapfall-search/Cargo.toml crates/trapfall-search/Cargo.toml
+COPY crates/trapfall-alert/Cargo.toml crates/trapfall-alert/Cargo.toml
+COPY crates/trapfall-mcp/Cargo.toml crates/trapfall-mcp/Cargo.toml
+COPY crates/trapfall-dashboard/Cargo.toml crates/trapfall-dashboard/Cargo.toml
+COPY crates/trapfalld/Cargo.toml crates/trapfalld/Cargo.toml
+
+# Create dummy source files for dependency caching
+RUN mkdir -p crates/trapfall-proto/src && echo "" > crates/trapfall-proto/src/lib.rs && \
+    mkdir -p crates/trapfall-core/src && echo "" > crates/trapfall-core/src/lib.rs && \
+    mkdir -p crates/trapfall-ingest/src && echo "" > crates/trapfall-ingest/src/lib.rs && \
+    mkdir -p crates/trapfall-search/src && echo "" > crates/trapfall-search/src/lib.rs && \
+    mkdir -p crates/trapfall-alert/src && echo "" > crates/trapfall-alert/src/lib.rs && \
+    mkdir -p crates/trapfall-mcp/src && echo "" > crates/trapfall-mcp/src/lib.rs && \
+    mkdir -p crates/trapfall-dashboard/src && echo "" > crates/trapfall-dashboard/src/lib.rs && \
+    mkdir -p crates/trapfalld/src && echo "fn main() {}" > crates/trapfalld/src/main.rs
+RUN cargo build --release --bin trapfall 2>/dev/null || true
+
+# Copy real source and rebuild
+COPY . .
+COPY --from=frontend /app/web/build web/build
+RUN touch crates/*/src/*.rs && cargo build --release --bin trapfall
+
+# ── Stage 3: Minimal runtime ──────────────────────────────────────────
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
