@@ -1,11 +1,13 @@
 # Changelog
 
-All notable changes to TrapFall will be documented in this file.
+All notable changes to TrapFall are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — 2026-06-08
+## [Unreleased]
+
+## [0.0.2] - 2026-06-08
 
 ### Added
 
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docker**: Multi-stage build, GHCR publishing
 - **CI/CD**: GitHub Actions — Build, Check, Clippy, Format, Test, Cora Review, Cargo Audit, Trivy Filesystem/Secrets, npm Audit
 - **Security**: Rate limiting, CORS configuration, configurable secure cookies, DSN key masking
+- **Release workflow**: Cross-compile 4 platforms, SHA256 checksums, auto sync `main` branch
 
 ### Security
 
@@ -40,3 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
+
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.2...develop
+[0.0.2]: https://github.com/codecoradev/trapfall/releases/tag/v0.0.2
