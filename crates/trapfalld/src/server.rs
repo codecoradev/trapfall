@@ -1,9 +1,10 @@
 //! HTTP server — Axum router, ingest handler, health check, API routes.
 
+use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     middleware,
     response::{IntoResponse, Json},
     routing::{get, post},
@@ -64,7 +65,8 @@ pub fn router(state: AppState) -> Router {
         // Protected dashboard routes
         .nest("/api/0", dashboard_api)
         .fallback(crate::spa::spa_handler)
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer(build_cors_layer(&state.config))
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10 MB max body size (DoS protection)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -384,5 +386,23 @@ async fn search_issues(
             Json(ListResponse { data: issues, total, page: page as u32, per_page: limit as u32 }).into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+// ── CORS Builder ──────────────────────────────────────────────────────
+
+/// Build CORS layer from config. Empty `cors_origins` = allow all (dev mode).
+/// Production should set explicit origins.
+fn build_cors_layer(config: &Config) -> CorsLayer {
+    let allow_headers =
+        [axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION, axum::http::header::COOKIE];
+    let allow_methods = [Method::GET, Method::POST, Method::DELETE, Method::OPTIONS];
+
+    if config.cors_origins.is_empty() {
+        tracing::warn!("CORS: allowing all origins — set cors_origins in config for production");
+        CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any)
+    } else {
+        let origins: Vec<_> = config.cors_origins.iter().filter_map(|o| o.parse().ok()).collect();
+        CorsLayer::new().allow_origin(origins).allow_methods(allow_methods).allow_headers(allow_headers)
     }
 }

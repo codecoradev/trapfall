@@ -133,7 +133,11 @@ async fn main() -> Result<()> {
 async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
     info!("TrapFall daemon starting");
 
-    let config = Config { db_path: std::path::PathBuf::from("trapfall.db"), listen_addr: listen.clone() };
+    let config = Config {
+        db_path: std::path::PathBuf::from("trapfall.db"),
+        listen_addr: listen.clone(),
+        cors_origins: Vec::new(),
+    };
 
     // Channel: ingest → digest
     let (ingest_tx, ingest_rx) = mpsc::channel::<trapfall_proto::IngestEvent>(1024);

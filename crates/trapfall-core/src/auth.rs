@@ -29,6 +29,9 @@ const SESSION_DURATION_DAYS: i64 = 7;
 /// Minimum password length.
 const MIN_PASSWORD_LEN: usize = 8;
 
+/// Minimum email length.
+const MIN_EMAIL_LEN: usize = 5;
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 /// User record.
@@ -107,6 +110,26 @@ pub fn validate_password(password: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate email format (basic RFC 5322 sanity check).
+pub fn validate_email(email: &str) -> Result<(), String> {
+    if email.len() < MIN_EMAIL_LEN {
+        return Err("Email is too short".to_string());
+    }
+    // Must contain exactly one @, with non-empty local and domain parts
+    let parts: Vec<&str> = email.rsplitn(2, '@').collect();
+    if parts.len() != 2 {
+        return Err("Invalid email format: missing @".to_string());
+    }
+    let (domain, local) = (parts[0], parts[1]);
+    if local.is_empty() {
+        return Err("Invalid email format: empty local part".to_string());
+    }
+    if domain.is_empty() || !domain.contains('.') {
+        return Err("Invalid email format: invalid domain".to_string());
+    }
+    Ok(())
+}
+
 // ── Store Auth Extensions (#18, #20) ──────────────────────────────────
 
 impl Store {
@@ -120,6 +143,7 @@ impl Store {
 
     /// Create a new user (admin for Solo MVP).
     pub async fn create_user(&self, email: &str, name: &str, password: &str) -> Result<User> {
+        validate_email(email).map_err(|e| anyhow::anyhow!(e))?;
         validate_password(password).map_err(|e| anyhow::anyhow!(e))?;
         let hash = hash_password(password)?;
         let id = new_id();
@@ -419,5 +443,38 @@ mod tests {
         // Delete session (logout)
         store.delete_session(&session.token).await.unwrap();
         assert!(store.get_session(&session.token).await.unwrap().is_none());
+    }
+
+    // ── Email Validation (#89) ─────────────────────────────────────
+
+    #[test]
+    fn test_validate_email_valid() {
+        assert!(validate_email("user@example.com").is_ok());
+        assert!(validate_email("a@b.co").is_ok());
+        assert!(validate_email("admin+tag@company.io").is_ok());
+    }
+
+    #[test]
+    fn test_validate_email_invalid() {
+        // No @
+        assert!(validate_email("noemail").is_err());
+        // Empty local part
+        assert!(validate_email("@example.com").is_err());
+        // No domain dot
+        assert!(validate_email("user@localhost").is_err());
+        // Too short
+        assert!(validate_email("a@b").is_err());
+        // Empty string
+        assert!(validate_email("").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_rejects_invalid_email() {
+        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
+        crate::run_migrations(&pool).await.unwrap();
+        let store = Store::new(pool);
+
+        let result = store.create_user("not-an-email", "Test", "password123").await;
+        assert!(result.is_err());
     }
 }
