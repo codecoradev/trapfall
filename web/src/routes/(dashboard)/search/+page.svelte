@@ -21,7 +21,7 @@
 
 	onMount(async () => {
 		try {
-			projects = await api.get<Project[]>('/api/0/projects');
+			projects = await api.get<Project[]>('/0/projects');
 			if (projects.length > 0) {
 				selectedSlug = projects[0].slug;
 			}
@@ -43,7 +43,7 @@
 		if (levelFilter) params.set('level', levelFilter);
 
 		api
-			.get<{ data: Issue[]; total: number }>(`/api/0/projects/${selectedSlug}/search?${params}`)
+			.get<{ data: Issue[]; total: number }>(`/0/projects/${selectedSlug}/search?${params}`)
 			.then((data) => {
 				results = data.data ?? [];
 				total = data.total ?? 0;

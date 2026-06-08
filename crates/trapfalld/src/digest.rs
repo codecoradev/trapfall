@@ -83,7 +83,11 @@ impl DigestTask {
             match Self::process_event(store, ev).await {
                 Ok(issue) => {
                     if let Some(tx) = ws_tx {
-                        let msg = ServerMessage::IssueUpdated { issue: issue.clone() };
+                        let msg = if issue.count == 1 {
+                            ServerMessage::IssueCreated { issue: issue.clone() }
+                        } else {
+                            ServerMessage::IssueUpdated { issue: issue.clone() }
+                        };
                         let _ = tx.send(msg);
                     }
                     if let Some(tx) = alert_tx {

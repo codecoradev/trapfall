@@ -84,3 +84,43 @@ pub async fn search_issues(
 
     Ok(issues)
 }
+
+/// Count issues matching a search query with optional filters.
+pub async fn count_search_issues(
+    pool: &SqlitePool,
+    query: &str,
+    project_id: Option<&str>,
+    status: Option<&str>,
+    level: Option<&str>,
+) -> anyhow::Result<i64> {
+    let pattern = format!("%{query}%");
+
+    let sql_base = "SELECT COUNT(*) FROM issues WHERE (title LIKE ? OR culprit LIKE ?)";
+
+    let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
+    let mut conds: Vec<String> = Vec::new();
+
+    if let Some(pid) = project_id {
+        conds.push("project_id = ?".into());
+        bindings.push(pid.to_string());
+    }
+    if let Some(s) = status {
+        conds.push("status = ?".into());
+        bindings.push(s.to_string());
+    }
+    if let Some(l) = level {
+        conds.push("level = ?".into());
+        bindings.push(l.to_string());
+    }
+
+    let where_ext = if conds.is_empty() { String::new() } else { format!(" AND {}", conds.join(" AND ")) };
+    let full_sql = format!("{sql_base}{where_ext}");
+
+    let mut q = sqlx::query_scalar::<_, i64>(&full_sql);
+    for b in &bindings {
+        q = q.bind(b);
+    }
+
+    let count = q.fetch_one(pool).await?;
+    Ok(count)
+}
