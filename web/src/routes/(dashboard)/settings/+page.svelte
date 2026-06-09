@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, type UserInfo } from '$lib/api';
-	import { getAuthStore } from '$lib/stores/auth';
+	import { getAuthStore } from '$lib/stores/auth.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';

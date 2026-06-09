@@ -20,6 +20,7 @@ Thumbs.db
 # Env
 .env
 .env.*
+!.env.example
 
 # Web build artifacts (keep placeholder for rust-embed)
 /web/build/*

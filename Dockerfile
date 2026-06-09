@@ -8,9 +8,13 @@ RUN npm run build
 
 # ── Stage 2: Build binary ─────────────────────────────────────────────
 FROM rust:1.86-slim-bookworm AS builder
+
+# Install build dependencies (OpenSSL for reqwest native-tls)
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Cache dependencies
+# Cache dependencies — copy only Cargo files first
 COPY Cargo.toml Cargo.lock ./
 COPY crates/trapfall-proto/Cargo.toml crates/trapfall-proto/Cargo.toml
 COPY crates/trapfall-core/Cargo.toml crates/trapfall-core/Cargo.toml
@@ -39,14 +43,18 @@ RUN touch crates/*/src/*.rs && cargo build --release --bin trapfall
 
 # ── Stage 3: Minimal runtime ──────────────────────────────────────────
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/trapfall /usr/local/bin/trapfall
 COPY --from=frontend /app/web/build /app/web/build
 
+# Default config — override with env vars or config file
 ENV TRAPFALL_LISTEN=0.0.0.0:3000
 ENV RUST_LOG=trapfall=info
+
+# Database will be created at /data/trapfall.db
+VOLUME /data
 
 EXPOSE 3000
 ENTRYPOINT ["trapfall"]

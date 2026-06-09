@@ -179,7 +179,7 @@ async fn setup_status_needs_setup() {
     let state = make_state(pool, RateLimiter::default());
     let app = router(state);
 
-    let req = Request::builder().uri("/api/setup").body(Body::empty()).unwrap();
+    let req = Request::builder().uri("/api/0/setup").body(Body::empty()).unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
@@ -196,7 +196,7 @@ async fn setup_creates_admin_and_project() {
 
     let req = Request::builder()
         .method("POST")
-        .uri("/api/setup")
+        .uri("/api/0/setup")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
         .unwrap();
@@ -219,7 +219,7 @@ async fn setup_forbidden_after_first_user() {
     // First setup
     let req = Request::builder()
         .method("POST")
-        .uri("/api/setup")
+        .uri("/api/0/setup")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
         .unwrap();
@@ -229,7 +229,7 @@ async fn setup_forbidden_after_first_user() {
     // Second setup should be forbidden
     let req2 = Request::builder()
         .method("POST")
-        .uri("/api/setup")
+        .uri("/api/0/setup")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"second@test.com","name":"Second","password":"password456"}"#))
         .unwrap();
@@ -246,7 +246,7 @@ async fn login_returns_session_cookie() {
     // Setup first
     let setup_req = Request::builder()
         .method("POST")
-        .uri("/api/setup")
+        .uri("/api/0/setup")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
         .unwrap();
@@ -255,7 +255,7 @@ async fn login_returns_session_cookie() {
     // Login
     let login_req = Request::builder()
         .method("POST")
-        .uri("/api/auth/login")
+        .uri("/api/0/auth/login")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"admin@test.com","password":"password123"}"#))
         .unwrap();
@@ -280,7 +280,7 @@ async fn login_rejects_wrong_password() {
     // Setup
     let setup_req = Request::builder()
         .method("POST")
-        .uri("/api/setup")
+        .uri("/api/0/setup")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password123"}"#))
         .unwrap();
@@ -289,7 +289,7 @@ async fn login_rejects_wrong_password() {
     // Login with wrong password
     let login_req = Request::builder()
         .method("POST")
-        .uri("/api/auth/login")
+        .uri("/api/0/auth/login")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"email":"admin@test.com","password":"wrong"}"#))
         .unwrap();

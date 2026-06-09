@@ -2,7 +2,7 @@
  * TrapFall API client — typed wrapper around fetch for the TrapFall daemon API.
  */
 
-const API_BASE = '/api';
+const API_BASE = '/api/0';
 
 export interface ApiError {
 	error: string;
