@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { getAuthStore } from '$lib/stores/auth';
+	import { getAuthStore } from '$lib/stores/auth.svelte';
 	import { destroyWsClient } from '$lib/ws';
 	import type { UserInfo } from '$lib/api';
 

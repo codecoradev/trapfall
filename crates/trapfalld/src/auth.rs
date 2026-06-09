@@ -71,9 +71,9 @@ const COOKIE_MAX_AGE: &str = "604800"; // 7 days in seconds
 /// Build auth routes (no auth middleware — these are public).
 pub fn auth_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/setup", get(setup_status).post(setup))
-        .route("/api/auth/login", post(login))
-        .route("/api/auth/logout", post(logout))
+        .route("/api/0/setup", get(setup_status).post(setup))
+        .route("/api/0/auth/login", post(login))
+        .route("/api/0/auth/logout", post(logout))
 }
 
 /// Build auth-protected routes (require session cookie).

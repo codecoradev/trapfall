@@ -1,18 +1,23 @@
 services:
   trapfall:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: trapfall:local
     container_name: trapfall
     restart: unless-stopped
     ports:
-      - "${TRAPFALL_PORT:-9090}:9090"
+      - "${TRAPFALL_PORT:-3000}:3000"
     volumes:
       - trapfall-data:/data
     environment:
-      - RUST_LOG=${RUST_LOG:-info}
-      - TRAPFALL_DB=/data/trapfall.db
-      - TRAPFALL_LISTEN=0.0.0.0:9090
+      - RUST_LOG=${RUST_LOG:-trapfall=info}
+    command: >
+      --db /data/trapfall.db
+      serve
+      --listen 0.0.0.0:3000
     healthcheck:
-      test: ["CMD", "trapfall", "healthcheck"]
+      test: ["CMD", "trapfall", "--db", "/data/trapfall.db", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

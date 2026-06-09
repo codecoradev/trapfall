@@ -61,7 +61,7 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics", get(crate::metrics::metrics))
         // Public ingest API (DSN key auth)
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
-        // Auth routes (public)
+        // Auth routes (public, under /api/0)
         .merge(auth_routes)
         // Protected dashboard routes
         .nest("/api/0", dashboard_api)
