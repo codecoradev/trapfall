@@ -60,14 +60,18 @@
 						<code class="text-xs break-all">{dsn}</code>
 					</div>
 					<div class="text-xs text-muted-foreground space-y-2">
-						<p class="font-medium text-foreground">Quick start:</p>
-						<pre class="bg-muted p-2 rounded overflow-x-auto"><!-- Backend (Rust) -->
-sentry::init(("{dsn}", sentry::ClientOptions::default()));</pre>
-						<pre class="bg-muted p-2 rounded overflow-x-auto"><!-- Python -->
+						<p class="font-medium text-foreground">Quick start — use this DSN with any Sentry SDK:</p>
+						<pre class="bg-muted p-2 rounded overflow-x-auto">{`# Rust
+sentry::init(("${dsn}", sentry::ClientOptions::default()));`}</pre>
+						<pre class="bg-muted p-2 rounded overflow-x-auto">{`# Python
 import sentry_sdk
-sentry_sdk.init(dsn="{dsn}")</pre>
-						<pre class="bg-muted p-2 rounded overflow-x-auto"><!-- JavaScript/Node -->
-Sentry.init({ dsn: "{dsn}" });</pre>
+sentry_sdk.init(dsn="${dsn}")`}</pre>
+						<pre class="bg-muted p-2 rounded overflow-x-auto">{`// JavaScript / Node
+Sentry.init({ dsn: "${dsn}" });`}</pre>
+						<pre class="bg-muted p-2 rounded overflow-x-auto">{`// Flutter / Dart
+await SentryFlutter.init((options) => {
+  options.dsn = "${dsn}";
+});`}</pre>
 						<p>Works with any Sentry SDK — just swap the DSN to point to your TrapFall server.</p>
 					</div>
 					<Button onclick={handleContinue} class="w-full">Go to Dashboard</Button>
