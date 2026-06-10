@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use trapfall_core::Store;
 use trapfall_ingest::parse_envelope;
@@ -37,7 +38,7 @@ pub fn router(state: AppState) -> Router {
 
     // ── Dashboard API (auth-protected) ───────────────────────────
     let dashboard_api = Router::new()
-        .route("/projects", get(list_projects))
+        .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{slug}", get(get_project))
         .route("/projects/{slug}/issues", get(list_issues))
         .route("/issues/{issue_id}", get(get_issue))
@@ -52,8 +53,6 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/change-password", post(crate::auth::change_password))
         // Search
         .route("/projects/{slug}/search", get(search_issues))
-        // WebSocket (auth via query token)
-        .route("/ws", get(crate::ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth));
 
     Router::new()
@@ -65,6 +64,8 @@ pub fn router(state: AppState) -> Router {
         .merge(auth_routes)
         // Protected dashboard routes
         .nest("/api/0", dashboard_api)
+        // WebSocket (auth via cookie, outside middleware to allow upgrade)
+        .route("/api/0/ws", get(crate::ws::ws_handler))
         .fallback(crate::spa::spa_handler)
         .layer(build_cors_layer(&state.config))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10 MB max body size (DoS protection)
@@ -82,6 +83,29 @@ async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfal
     let store = Store::new(state.pool);
     let projects = store.list_projects().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(projects))
+}
+
+#[derive(serde::Deserialize)]
+struct CreateProjectRequest {
+    name: String,
+    slug: Option<String>,
+}
+
+async fn create_project(
+    State(state): State<AppState>,
+    _user: AuthenticatedUser,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<CreateProjectRequest>,
+) -> Result<(StatusCode, Json<trapfall_proto::Project>), StatusCode> {
+    let store = Store::new(state.pool);
+    let slug = req.slug.unwrap_or_else(|| req.name.to_lowercase().replace(' ', "-"));
+    // Use request Host header for DSN generation
+    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000");
+    let project = store.create_project_with_host(&slug, &req.name, host).await.map_err(|e| {
+        tracing::warn!("Create project failed: {e}");
+        StatusCode::CONFLICT
+    })?;
+    Ok((StatusCode::CREATED, Json(project)))
 }
 
 async fn get_project(

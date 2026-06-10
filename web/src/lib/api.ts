@@ -141,11 +141,15 @@ class ApiClient {
 	// ── Projects ──────────────────────────────────────────────────────
 
 	async listProjects(): Promise<Project[]> {
-		return this.get<Project[]>('/0/projects');
+		return this.get<Project[]>('/projects');
+	}
+
+	async createProject(name: string, slug?: string): Promise<Project> {
+		return this.post<Project>('/projects', { name, slug });
 	}
 
 	async getProject(slug: string): Promise<Project> {
-		return this.get<Project>(`/0/projects/${slug}`);
+		return this.get<Project>(`/projects/${slug}`);
 	}
 
 	// ── Issues ────────────────────────────────────────────────────────
@@ -156,16 +160,16 @@ class ApiClient {
 		perPage = 20
 	): Promise<ListResponse<Issue>> {
 		return this.get<ListResponse<Issue>>(
-			`/0/projects/${projectSlug}/issues?page=${page}&per_page=${perPage}`
+			`/projects/${projectSlug}/issues?page=${page}&per_page=${perPage}`
 		);
 	}
 
 	async getIssue(issueId: string): Promise<Issue> {
-		return this.get<Issue>(`/0/issues/${issueId}`);
+		return this.get<Issue>(`/issues/${issueId}`);
 	}
 
 	async setIssueStatus(issueId: string, status: IssueStatus): Promise<void> {
-		await this.post(`/0/issues/${issueId}/status`, { status });
+		await this.post(`/issues/${issueId}/status`, { status });
 	}
 
 	// ── Events ────────────────────────────────────────────────────────
@@ -176,7 +180,7 @@ class ApiClient {
 		perPage = 20
 	): Promise<ListResponse<StoredEvent>> {
 		return this.get<ListResponse<StoredEvent>>(
-			`/0/issues/${issueId}/events?page=${page}&per_page=${perPage}`
+			`/issues/${issueId}/events?page=${page}&per_page=${perPage}`
 		);
 	}
 }
@@ -226,7 +230,7 @@ export interface CreateAlertRule {
 // TODO: migrate into ApiClient class methods.
 
 export async function listAlertRules(projectSlug: string): Promise<AlertRule[]> {
-	const res = await fetch(`${API_BASE}/0/projects/${projectSlug}/rules`);
+	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`);
 	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
 	if (!res.ok) throw new ApiClientError(res.status, await res.text());
 	return res.json();
@@ -236,7 +240,7 @@ export async function createAlertRule(
 	projectSlug: string,
 	rule: CreateAlertRule
 ): Promise<AlertRule> {
-	const res = await fetch(`${API_BASE}/0/projects/${projectSlug}/rules`, {
+	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(rule)
@@ -247,13 +251,13 @@ export async function createAlertRule(
 }
 
 export async function deleteAlertRule(ruleId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/0/rules/${ruleId}`, { method: 'DELETE' });
+	const res = await fetch(`${API_BASE}/rules/${ruleId}`, { method: 'DELETE' });
 	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
 	if (!res.ok && res.status !== 200) throw new ApiClientError(res.status, await res.text());
 }
 
 export async function toggleAlertRule(ruleId: string, enabled: boolean): Promise<void> {
-	const res = await fetch(`${API_BASE}/0/rules/${ruleId}/toggle`, {
+	const res = await fetch(`${API_BASE}/rules/${ruleId}/toggle`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ enabled })

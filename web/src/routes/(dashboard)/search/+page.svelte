@@ -62,7 +62,7 @@
 	}
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6 p-4 lg:p-6">
 	<div>
 		<h1 class="text-2xl font-bold">Search Issues</h1>
 		<p class="text-muted-foreground">Search across all issues in a project</p>

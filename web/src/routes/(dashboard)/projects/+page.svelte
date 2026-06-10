@@ -4,12 +4,19 @@
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 
 	let projects: Project[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
 	let showDsn: Record<string, boolean> = $state({});
+	let showAddForm = $state(false);
+	let newProjectName = $state('');
+	let newProjectSlug = $state('');
+	let addError = $state('');
+	let addLoading = $state(false);
 
 	function toggleDsn(id: string) {
 		showDsn[id] = !showDsn[id];
@@ -19,7 +26,7 @@
 		navigator.clipboard.writeText(text);
 	}
 
-	onMount(async () => {
+	async function loadProjects() {
 		try {
 			projects = await api.listProjects();
 		} catch (e: any) {
@@ -27,7 +34,27 @@
 		} finally {
 			loading = false;
 		}
-	});
+	}
+
+	async function handleAddProject(e: Event) {
+		e.preventDefault();
+		addError = '';
+		addLoading = true;
+		try {
+			const slug = newProjectSlug || undefined;
+			await api.createProject(newProjectName, slug);
+			newProjectName = '';
+			newProjectSlug = '';
+			showAddForm = false;
+			await loadProjects();
+		} catch (e: any) {
+			addError = e?.message || 'Failed to create project';
+		} finally {
+			addLoading = false;
+		}
+	}
+
+	onMount(loadProjects);
 </script>
 
 <svelte:head>
@@ -37,7 +64,47 @@
 <div class="p-4 lg:p-6 space-y-4">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Projects</h1>
+		<Button onclick={() => (showAddForm = !showAddForm)}>
+			{showAddForm ? 'Cancel' : '+ Add Project'}
+		</Button>
 	</div>
+
+	{#if showAddForm}
+		<Card>
+			<CardHeader>
+				<CardTitle class="text-lg">New Project</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<form onsubmit={handleAddProject} class="space-y-4 max-w-md">
+					{#if addError}
+						<p class="text-sm text-destructive">{addError}</p>
+					{/if}
+					<div class="space-y-2">
+						<Label for="proj-name">Project Name</Label>
+						<Input
+							id="proj-name"
+							type="text"
+							bind:value={newProjectName}
+							required
+							placeholder="My Web App"
+						/>
+					</div>
+					<div class="space-y-2">
+						<Label for="proj-slug">Slug (optional, auto-generated from name)</Label>
+						<Input
+							id="proj-slug"
+							type="text"
+							bind:value={newProjectSlug}
+							placeholder="my-web-app"
+						/>
+					</div>
+					<Button type="submit" disabled={addLoading}>
+						{addLoading ? 'Creating...' : 'Create Project'}
+					</Button>
+				</form>
+			</CardContent>
+		</Card>
+	{/if}
 
 	{#if loading}
 		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -66,7 +133,7 @@
 					</CardHeader>
 					<CardContent class="space-y-2">
 						<div>
-							<p class="text-xs text-muted-foreground mb-1">DSN</p>
+							<p class="text-xs text-muted-foreground mb-1">DSN (use this in your SDK)</p>
 							<div class="flex items-center gap-2">
 								<code class="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
 									{showDsn[project.id] ? project.dsn : '••••••••••••••••'}

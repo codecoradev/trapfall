@@ -4,7 +4,7 @@
 //! validates the session cookie before the WS upgrade reaches this handler.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::{extract::State, response::IntoResponse};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use trapfall_proto::ServerMessage;
@@ -30,9 +30,21 @@ impl WsHub {
     }
 }
 
-/// WebSocket upgrade handler — auth is enforced by the router middleware layer.
-pub async fn ws_handler(State(state): State<crate::server::AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub.clone()))
+/// WebSocket upgrade handler — validates session cookie before upgrade.
+pub async fn ws_handler(
+    State(state): State<crate::server::AppState>,
+    ws: WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    // Auth check: validate session cookie
+    let token = crate::auth::extract_session_token(&headers);
+    if let Some(token) = token {
+        let store = trapfall_core::Store::new(state.pool.clone());
+        if store.get_session(&token).await.is_ok_and(|s| s.is_some()) {
+            return ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub.clone()));
+        }
+    }
+    (StatusCode::UNAUTHORIZED, "Not authenticated").into_response()
 }
 
 async fn handle_socket(mut socket: WebSocket, hub: WsHub) {
