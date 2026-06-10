@@ -179,7 +179,7 @@ async fn ingest_envelope(
     for event in events {
         let fingerprint = trapfall_core::derive_fingerprint(&event);
         let ingest_event = IngestEvent {
-            project_id: project_id.clone(),
+            project_id: project.id.clone(),
             fingerprint,
             event,
             received_at: chrono::Utc::now().to_rfc3339(),

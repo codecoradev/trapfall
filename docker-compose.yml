@@ -11,7 +11,8 @@ services:
     volumes:
       - trapfall-data:/data
     environment:
-      - RUST_LOG=${RUST_LOG:-trapfall=info}
+      - RUST_LOG=${RUST_LOG:-trapfall=debug}
+      - TRAPFALL_SECURE_COOKIE=false
     command: >
       --db /data/trapfall.db
       serve
