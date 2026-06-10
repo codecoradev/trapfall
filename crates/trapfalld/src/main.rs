@@ -133,9 +133,8 @@ async fn main() -> Result<()> {
 async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
     info!("TrapFall daemon starting");
 
-    let secure_cookie = std::env::var("TRAPFALL_SECURE_COOKIE")
-        .map(|v| v.to_lowercase() != "false" && v != "0")
-        .unwrap_or(true);
+    let secure_cookie =
+        std::env::var("TRAPFALL_SECURE_COOKIE").map(|v| v.to_lowercase() != "false" && v != "0").unwrap_or(true);
     let cors_origins = std::env::var("TRAPFALL_CORS_ORIGINS")
         .map(|s| s.split(',').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect())
         .unwrap_or_default();
