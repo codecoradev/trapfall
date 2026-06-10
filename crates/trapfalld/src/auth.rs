@@ -96,6 +96,7 @@ async fn setup_status(State(state): State<AppState>) -> Json<SetupStatus> {
 /// POST /api/setup — Create first admin + default project.
 async fn setup(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<SetupRequest>,
 ) -> Result<(StatusCode, Json<SetupResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = Store::new(state.pool);
@@ -111,9 +112,10 @@ async fn setup(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(AuthErrorJson { error: e.to_string() })))?;
 
-    // Create default project
+    // Create default project with request host for DSN
+    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000");
     let project = store
-        .create_project("default", "Default Project")
+        .create_project_with_host("default", "Default Project", host)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: e.to_string() })))?;
 
@@ -259,7 +261,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Extract session token from Cookie header.
-fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<String> {
+pub fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();

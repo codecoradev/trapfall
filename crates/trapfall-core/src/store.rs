@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use trapfall_proto::{Issue, IssueStatus, Level, Project, StoredEvent};
 
-use crate::{generate_dsn, new_id};
+use crate::{generate_dsn, generate_dsn_with, new_id};
 
 #[derive(Clone)]
 pub struct Store {
@@ -23,8 +23,12 @@ impl Store {
     // ── Projects ────────────────────────────────────────────────────────
 
     pub async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
+        self.create_project_with_host(slug, name, "localhost:3000").await
+    }
+
+    pub async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {
         let id = new_id();
-        let dsn = generate_dsn();
+        let dsn = generate_dsn_with(host);
         let dsn_key = extract_dsn_key(&dsn);
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)")
