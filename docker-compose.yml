@@ -1,5 +1,8 @@
 services:
   trapfall:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ghcr.io/codecoradev/trapfall:latest
     container_name: trapfall
     restart: unless-stopped
