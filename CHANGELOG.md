@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-06-11
+
+### Fixed
+
+- **Critical**: Ingest pipeline broken — handler looked up project by slug but received UUID from URL path. Events silently dropped (#135)
+- **Critical**: Envelope parser only supported 3-line format. Added support for 2-line bare event envelopes (#135)
+- **Critical**: FK constraint — ingest used URL slug instead of project UUID, causing all events to fail (#134)
+- WebSocket 401 after login — moved handler outside auth middleware, validates cookie directly (#132)
+- API double `/0/` path — `API_BASE + "/0/projects"` → `API_BASE + "/projects"` (#132)
+- DSN hardcoded `localhost:9090` — now uses request `Host` header (#132)
+- Setup page code examples caused Svelte build error — escaped curly braces in template literals (#133)
+- Secure cookie hardcoded `true` — browser rejected cookies via HTTP in local dev (#134)
+- Search page missing padding — inconsistent with other dashboard pages (#132)
+
+### Added
+
+- **Multi-project support**: "+ Add Project" button on Projects page (#132)
+- `POST /api/0/projects` endpoint for creating projects from dashboard (#132)
+- `create_project_with_host()` — generates DSN using request Host header (#132)
+- Setup page shows DSN usage examples (Rust, Python, JS, Flutter) (#132)
+- `get_project_by_id()` store method for UUID lookups (#135)
+- Diagnostic logging throughout ingest pipeline (#135)
+- `AGENTS.md` — rules for AI agents working on TrapFall (#134)
+- Cora Review CI step made non-blocking on API errors (#136)
+
+### Changed
+
+- Docker compose dev defaults: `RUST_LOG=debug`, `SECURE_COOKIE=false` (#134)
+- Digest flush log level promoted from trace to info (#135)
+- Integration tests updated to use UUID for ingest URL path (#135)
+
 ## [0.0.2] - 2026-06-08
 
 ### Added
@@ -44,5 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.2...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.3...develop
+[0.0.3]: https://github.com/codecoradev/trapfall/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/codecoradev/trapfall/releases/tag/v0.0.2
