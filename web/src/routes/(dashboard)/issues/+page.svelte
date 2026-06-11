@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { api, type Issue, type Project } from '$lib/api';
 	import { getWsClient, type ServerMessage } from '$lib/ws';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -16,7 +17,8 @@
 	} from '$lib/components/ui/table/index.js';
 
 	let issues: Issue[] = $state([]);
-	let project: Project | null = $state(null);
+	let projects: Project[] = $state([]);
+	let selectedProject: string = $state('');
 	let loading = $state(true);
 	let error = $state('');
 	let liveIndicator = $state(false);
@@ -25,21 +27,40 @@
 
 	let wsUnsub: (() => void) | null = $state(null);
 
-	onMount(async () => {
+	async function loadIssues() {
+		if (!selectedProject) return;
+		loading = true;
+		error = '';
 		try {
-			const projects = await api.listProjects();
-			if (projects.length === 0) {
-				error = 'No projects found. Create one via setup.';
-				loading = false;
-				return;
-			}
-			project = projects[0];
-
-			const res = await api.listIssues(project.slug);
+			const res = await api.listIssues(selectedProject);
 			issues = res.data;
 		} catch (e: any) {
 			error = e?.message || 'Failed to load issues';
 		} finally {
+			loading = false;
+		}
+	}
+
+	onMount(async () => {
+		try {
+			projects = await api.listProjects();
+			if (projects.length === 0) {
+				error = 'No projects found. Create one first.';
+				loading = false;
+				return;
+			}
+
+			// Use query param or default to first project
+			const queryProject = page.url.searchParams.get('project');
+			if (queryProject && projects.some(p => p.slug === queryProject)) {
+				selectedProject = queryProject;
+			} else {
+				selectedProject = projects[0].slug;
+			}
+
+			await loadIssues();
+		} catch (e: any) {
+			error = e?.message || 'Failed to load';
 			loading = false;
 		}
 
@@ -62,6 +83,12 @@
 			}
 		});
 	});
+
+	function switchProject(slug: string) {
+		selectedProject = slug;
+		goto(`/issues?project=${slug}`, { replaceState: true });
+		loadIssues();
+	}
 </script>
 
 <svelte:head>
@@ -78,8 +105,18 @@
 					Live
 				</span>
 			{/if}
-			{#if project}
-				<Badge variant="outline">{project.name}</Badge>
+			{#if projects.length > 1}
+				<select
+					class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+					bind:value={selectedProject}
+					onchange={() => switchProject(selectedProject)}
+				>
+					{#each projects as p}
+						<option value={p.slug}>{p.name}</option>
+					{/each}
+				</select>
+			{:else if projects.length === 1}
+				<Badge variant="outline">{projects[0].name}</Badge>
 			{/if}
 		</div>
 	</div>
@@ -119,7 +156,7 @@
 					{#each issues as issue}
 						<TableRow
 							class="cursor-pointer hover:bg-muted/50"
-							onclick={() => goto(`/issues/${issue.id}`)}
+							onclick={() => goto(`/issues/${issue.id}?project=${selectedProject}`)}
 						>
 							<TableCell>
 								<Badge variant="outline" class={levelTextClass(issue.level)}>
