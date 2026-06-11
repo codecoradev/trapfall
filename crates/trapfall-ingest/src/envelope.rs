@@ -59,9 +59,21 @@ fn parse_envelope_text(text: &str) -> Result<Vec<Event>> {
 
     // Process items: header line + body line pairs
     while let Some(item_header_line) = lines.next() {
-        let item_header: serde_json::Value = serde_json::from_str(item_header_line).unwrap_or_default();
+        // Skip empty lines
+        if item_header_line.trim().is_empty() {
+            continue;
+        }
 
+        let item_header: serde_json::Value = serde_json::from_str(item_header_line).unwrap_or_default();
         let item_type = item_header.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        // If no type field, this might be a bare event (2-line envelope: header + event)
+        if item_type.is_empty() && item_header.get("event_id").is_some() {
+            if let Ok(event) = serde_json::from_value::<Event>(item_header) {
+                events.push(event);
+            }
+            continue;
+        }
 
         let body_line = match lines.next() {
             Some(l) => l,

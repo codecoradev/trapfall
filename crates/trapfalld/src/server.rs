@@ -126,7 +126,7 @@ async fn ingest_envelope(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> StatusCode {
-    // Rate limit check
+    tracing::info!("Ingest request: project_id={project_id} body_len={}", body.len());
     if !state.rate_limiter.try_consume(&project_id, 1.0) {
         return StatusCode::TOO_MANY_REQUESTS;
     }
@@ -150,21 +150,43 @@ async fn ingest_envelope(
     };
 
     // Verify DSN key matches project
-    let project = match store.get_project_by_slug(&project_id).await {
+    let project = match store.get_project_by_id(&project_id).await {
         Ok(Some(p)) => p,
-        _ => return StatusCode::NOT_FOUND,
+        Ok(None) => {
+            tracing::warn!("Project not found by id: {project_id}");
+            return StatusCode::NOT_FOUND;
+        }
+        Err(e) => {
+            tracing::error!("DB error looking up project: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
     };
     match store.get_project_by_dsn_key(&dsn_key).await {
         Ok(Some(p)) if p.id == project.id => {}
-        _ => return StatusCode::UNAUTHORIZED,
+        Ok(Some(p)) => {
+            tracing::warn!("DSN key mismatch: expected project {} got {}", project.id, p.id);
+            return StatusCode::UNAUTHORIZED;
+        }
+        Ok(None) => {
+            tracing::warn!("No project found for DSN key");
+            return StatusCode::UNAUTHORIZED;
+        }
+        Err(e) => {
+            tracing::error!("DB error checking DSN key: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
     }
 
     // Extract content encoding
     let encoding = headers.get("content-encoding").and_then(|v| v.to_str().ok());
+    tracing::info!("Encoding: {:?}", encoding);
 
     // Parse envelope
     let events = match parse_envelope(&body, encoding) {
-        Ok(e) => e,
+        Ok(e) => {
+            tracing::info!("Parsed {} events", e.len());
+            e
+        }
         Err(e) => {
             tracing::warn!("Failed to parse envelope: {e}");
             return StatusCode::BAD_REQUEST;
@@ -194,7 +216,7 @@ async fn ingest_envelope(
         }
     }
 
-    tracing::trace!("Accepted {accepted} events for project {project_id}");
+    tracing::info!("Accepted {accepted} events for project {project_id}");
     StatusCode::OK
 }
 
