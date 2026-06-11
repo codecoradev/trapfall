@@ -71,7 +71,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # Embedded SPA
-rust-embed = "8"
+rust-embed = { version = "8", features = ["include-exclude"] }
 
 # Internal crates
 trapfall_proto = { path = "crates/trapfall-proto" }

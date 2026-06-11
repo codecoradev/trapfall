@@ -35,6 +35,8 @@ tower = { workspace = true }
 http-body-util = { workspace = true }
 reqwest = { workspace = true }
 url = "2"
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 [dev-dependencies]
 tower = { workspace = true }

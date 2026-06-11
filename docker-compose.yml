@@ -1,9 +1,6 @@
 services:
   trapfall:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: trapfall:local
+    image: ghcr.io/codecoradev/trapfall:latest
     container_name: trapfall
     restart: unless-stopped
     ports:
@@ -11,8 +8,8 @@ services:
     volumes:
       - trapfall-data:/data
     environment:
-      - RUST_LOG=${RUST_LOG:-trapfall=debug}
-      - TRAPFALL_SECURE_COOKIE=false
+      - RUST_LOG=${RUST_LOG:-trapfall=info}
+      - TRAPFALL_SECURE_COOKIE=${TRAPFALL_SECURE_COOKIE:-false}
     command: >
       --db /data/trapfall.db
       serve
