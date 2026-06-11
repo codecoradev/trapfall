@@ -9,6 +9,7 @@ pub mod rate_limit;
 pub mod retention;
 pub mod server;
 pub mod spa;
+pub mod swagger;
 pub mod ws;
 
 pub use alert::spawn_alert_engine;

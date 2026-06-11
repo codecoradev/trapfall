@@ -71,6 +71,8 @@ pub fn router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10 MB max body size (DoS protection)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+        // Swagger UI — stateless, merged after with_state
+        .merge(crate::swagger::swagger_routes())
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────
