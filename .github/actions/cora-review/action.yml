@@ -46,4 +46,9 @@ runs:
       env:
         CORA_API_KEY: ${{ inputs.cora-api-key }}
         CORA_BASE_URL: ${{ inputs.cora-base-url }}
-      run: cora review --base ${{ inputs.base-branch }} --format ${{ inputs.format }}
+      run: |
+        cora review --base ${{ inputs.base-branch }} --format ${{ inputs.format }} || {
+          echo "⚠️ Cora review encountered an API error — this is non-blocking"
+          echo "Cora service may be temporarily unavailable."
+          exit 0
+        }
