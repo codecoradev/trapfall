@@ -47,6 +47,7 @@ impl DigestTask {
         loop {
             tokio::select! {
                 Some(event) = self.rx.recv() => {
+                    tracing::debug!("Digest received event: project={}", event.project_id);
                     buffer.push(event);
                     if buffer.len() >= FLUSH_THRESHOLD {
                         Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
@@ -100,12 +101,13 @@ impl DigestTask {
             }
         }
 
-        tracing::trace!("Flushed {count} events");
+        tracing::info!("Flushed {count} events");
     }
 
     async fn process_event(store: &Store, ev: IngestEvent) -> anyhow::Result<Issue> {
         // Derive title from event
         let title = derive_title(&ev);
+        tracing::debug!("Processing event: title={title} project={}", ev.project_id);
 
         // Derive culprit from exception stacktrace
         let culprit = ev.event.exception.as_ref().and_then(|ex| {

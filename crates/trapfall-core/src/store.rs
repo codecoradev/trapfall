@@ -54,6 +54,15 @@ impl Store {
         Ok(row.map(Into::into))
     }
 
+    pub async fn get_project_by_id(&self, id: &str) -> Result<Option<Project>> {
+        let row = sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(Into::into))
+    }
+
     pub async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
         let row =
             sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn_key = ?")

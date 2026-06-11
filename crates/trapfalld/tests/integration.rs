@@ -37,7 +37,8 @@ async fn seed_project(pool: &SqlitePool) -> String {
         .await
         .unwrap();
 
-    slug.to_string()
+    // Return the UUID (used in ingest URL path)
+    id
 }
 
 fn make_envelope_body(exception_type: &str, message: &str) -> Vec<u8> {
@@ -80,14 +81,14 @@ async fn health_check_returns_ok() {
 #[tokio::test]
 async fn ingest_accepts_valid_envelope_with_dsn_key() {
     let pool = test_pool().await;
-    let slug = seed_project(&pool).await;
+    let project_id = seed_project(&pool).await;
     let state = make_state(pool, RateLimiter::default());
     let app = router(state);
 
     let body = make_envelope_body("TypeError", "Cannot read property 'x' of undefined");
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/{slug}/envelope/"))
+        .uri(format!("/api/{project_id}/envelope/"))
         .header("content-type", "application/octet-stream")
         .header("authorization", "Bearer abc123")
         .body(Body::from(body))
@@ -100,14 +101,14 @@ async fn ingest_accepts_valid_envelope_with_dsn_key() {
 #[tokio::test]
 async fn ingest_rejects_without_auth() {
     let pool = test_pool().await;
-    let slug = seed_project(&pool).await;
+    let project_id = seed_project(&pool).await;
     let state = make_state(pool, RateLimiter::default());
     let app = router(state);
 
     let body = make_envelope_body("Error", "test");
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/{slug}/envelope/"))
+        .uri(format!("/api/{project_id}/envelope/"))
         .header("content-type", "application/octet-stream")
         .body(Body::from(body))
         .unwrap();
@@ -138,7 +139,7 @@ async fn ingest_404_for_unknown_project() {
 #[tokio::test]
 async fn rate_limit_returns_429() {
     let pool = test_pool().await;
-    let slug = seed_project(&pool).await;
+    let project_id = seed_project(&pool).await;
 
     // Very restrictive: 2 burst, no refill
     let state = make_state(pool, RateLimiter::new(2.0, 0.0));
@@ -150,7 +151,7 @@ async fn rate_limit_returns_429() {
     for _ in 0..2 {
         let req = Request::builder()
             .method("POST")
-            .uri(format!("/api/{slug}/envelope/"))
+            .uri(format!("/api/{project_id}/envelope/"))
             .header("content-type", "application/octet-stream")
             .header("authorization", "Bearer abc123")
             .body(Body::from(body.clone()))
@@ -162,7 +163,7 @@ async fn rate_limit_returns_429() {
     // Third should be rate limited
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/{slug}/envelope/"))
+        .uri(format!("/api/{project_id}/envelope/"))
         .header("content-type", "application/octet-stream")
         .header("authorization", "Bearer abc123")
         .body(Body::from(body.clone()))
