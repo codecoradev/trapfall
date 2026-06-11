@@ -19,6 +19,12 @@
 	let issues: Issue[] = $state([]);
 	let projects: Project[] = $state([]);
 	let selectedProject: string = $state('');
+	let filterStatus: string = $state('');
+	let filterLevel: string = $state('');
+	let currentPage: number = $state(1);
+	let totalIssues: number = $state(0);
+	const perPage = 20;
+	let totalPages: number = $derived(Math.max(1, Math.ceil(totalIssues / perPage)));
 	let loading = $state(true);
 	let error = $state('');
 	let liveIndicator = $state(false);
@@ -27,18 +33,67 @@
 
 	let wsUnsub: (() => void) | null = $state(null);
 
+	const statuses = ['unresolved', 'resolved', 'ignored'];
+	const levels = ['fatal', 'error', 'warning', 'info', 'debug'];
+
+	function buildUrl(): string {
+		const params = new URLSearchParams();
+		if (selectedProject) params.set('project', selectedProject);
+		if (filterStatus) params.set('status', filterStatus);
+		if (filterLevel) params.set('level', filterLevel);
+		if (currentPage > 1) params.set('page', String(currentPage));
+		return `/issues?${params.toString()}`;
+	}
+
 	async function loadIssues() {
 		if (!selectedProject) return;
 		loading = true;
 		error = '';
 		try {
-			const res = await api.listIssues(selectedProject);
+			const res = await api.listIssues(selectedProject, {
+				page: currentPage,
+				perPage,
+				status: filterStatus || undefined,
+				level: filterLevel || undefined,
+			});
 			issues = res.data;
+			totalIssues = res.total;
 		} catch (e: any) {
 			error = e?.message || 'Failed to load issues';
 		} finally {
 			loading = false;
 		}
+	}
+
+	function navigate() {
+		goto(buildUrl(), { replaceState: true });
+		loadIssues();
+	}
+
+	function switchProject(slug: string) {
+		selectedProject = slug;
+		currentPage = 1;
+		navigate();
+	}
+
+	function setFilter(type: 'status' | 'level', value: string) {
+		if (type === 'status') filterStatus = value;
+		if (type === 'level') filterLevel = value;
+		currentPage = 1;
+		navigate();
+	}
+
+	function clearFilters() {
+		filterStatus = '';
+		filterLevel = '';
+		currentPage = 1;
+		navigate();
+	}
+
+	function goToPage(p: number) {
+		if (p < 1 || p > totalPages) return;
+		currentPage = p;
+		navigate();
 	}
 
 	onMount(async () => {
@@ -50,13 +105,13 @@
 				return;
 			}
 
-			// Use query param or default to first project
-			const queryProject = page.url.searchParams.get('project');
-			if (queryProject && projects.some(p => p.slug === queryProject)) {
-				selectedProject = queryProject;
-			} else {
-				selectedProject = projects[0].slug;
-			}
+			// Restore state from URL
+			const sp = page.url.searchParams;
+			const qp = sp.get('project');
+			selectedProject = (qp && projects.some(p => p.slug === qp)) ? qp : projects[0].slug;
+			filterStatus = sp.get('status') || '';
+			filterLevel = sp.get('level') || '';
+			currentPage = parseInt(sp.get('page') || '1', 10) || 1;
 
 			await loadIssues();
 		} catch (e: any) {
@@ -76,19 +131,13 @@
 				const idx = issues.findIndex((i) => i.id === incoming.id);
 				if (idx >= 0) {
 					issues[idx] = incoming;
-				} else {
+				} else if (currentPage === 1 && !filterStatus && !filterLevel) {
 					issues.unshift(incoming);
 				}
 				issues = issues;
 			}
 		});
 	});
-
-	function switchProject(slug: string) {
-		selectedProject = slug;
-		goto(`/issues?project=${slug}`, { replaceState: true });
-		loadIssues();
-	}
 </script>
 
 <svelte:head>
@@ -96,6 +145,7 @@
 </svelte:head>
 
 <div class="p-4 lg:p-6 space-y-4">
+	<!-- Header -->
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Issues</h1>
 		<div class="flex items-center gap-2">
@@ -121,6 +171,53 @@
 		</div>
 	</div>
 
+	<!-- Filters -->
+	<div class="flex flex-wrap items-center gap-2">
+		<!-- Status tabs -->
+		<div class="flex rounded-md border overflow-hidden">
+			<button
+				class="px-3 py-1.5 text-xs font-medium transition-colors {!filterStatus ? 'bg-primary text-primary-foreground' : 'bg-background hover:bg-muted'}"
+				onclick={() => setFilter('status', '')}
+			>
+				All
+			</button>
+			{#each statuses as s}
+				<button
+					class="px-3 py-1.5 text-xs font-medium border-l transition-colors {filterStatus === s ? 'bg-primary text-primary-foreground' : 'bg-background hover:bg-muted'}"
+					onclick={() => setFilter('status', s)}
+				>
+					{s}
+				</button>
+			{/each}
+		</div>
+
+		<!-- Level dropdown -->
+		<select
+			class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+			value={filterLevel}
+			onchange={(e) => setFilter('level', (e.target as HTMLSelectElement).value)}
+		>
+			<option value="">All levels</option>
+			{#each levels as l}
+				<option value={l}>{l}</option>
+			{/each}
+		</select>
+
+		{#if filterStatus || filterLevel}
+			<Button variant="ghost" size="sm" class="h-8 text-xs" onclick={clearFilters}>
+				Clear filters
+			</Button>
+		{/if}
+
+		<!-- Count -->
+		{#if !loading && totalIssues > 0}
+			<span class="text-xs text-muted-foreground ml-auto">
+				{totalIssues} issue{totalIssues !== 1 ? 's' : ''}
+			</span>
+		{/if}
+	</div>
+
+	<!-- Content -->
 	{#if loading}
 		<div class="space-y-3">
 			{#each Array(5) as _}
@@ -133,9 +230,9 @@
 		</div>
 	{:else if issues.length === 0}
 		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<p class="text-lg font-medium text-muted-foreground">No issues yet</p>
+			<p class="text-lg font-medium text-muted-foreground">No issues found</p>
 			<p class="text-sm text-muted-foreground mt-1">
-				Send errors to your DSN and they'll appear here.
+				{filterStatus || filterLevel ? 'Try adjusting your filters.' : 'Send errors to your DSN and they\'ll appear here.'}
 			</p>
 		</div>
 	{:else}
@@ -182,5 +279,45 @@
 				</TableBody>
 			</Table>
 		</div>
+
+		<!-- Pagination -->
+		{#if totalPages > 1}
+			<div class="flex items-center justify-between">
+				<p class="text-xs text-muted-foreground">
+					Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalIssues)} of {totalIssues}
+				</p>
+				<div class="flex items-center gap-1">
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={currentPage <= 1}
+						onclick={() => goToPage(currentPage - 1)}
+					>
+						Prev
+					</Button>
+					{#each Array(Math.min(totalPages, 5)) as _, i}
+						{@const pageNum = currentPage <= 3 ? i + 1 : currentPage - 2 + i}
+						{#if pageNum <= totalPages}
+							<Button
+								variant={pageNum === currentPage ? 'default' : 'outline'}
+								size="sm"
+								class="w-9"
+								onclick={() => goToPage(pageNum)}
+							>
+								{pageNum}
+							</Button>
+						{/if}
+					{/each}
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={currentPage >= totalPages}
+						onclick={() => goToPage(currentPage + 1)}
+					>
+						Next
+					</Button>
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>
