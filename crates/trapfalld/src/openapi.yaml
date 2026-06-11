@@ -780,13 +780,13 @@ components:
           type: string
         conditions:
           type: object
-          description: JSON conditions, e.g. {"level": "error"}
+          description: 'JSON conditions, e.g. {"level": "error"}'
         action_type:
           type: string
           enum: [webhook]
         action_config:
           type: object
-          description: JSON config, e.g. {"url": "https://hooks.example.com/..."}
+          description: 'JSON config, e.g. {"url": "https://hooks.example.com/..."}'
         cooldown_seconds:
           type: integer
           default: 300
