@@ -156,12 +156,14 @@ class ApiClient {
 
 	async listIssues(
 		projectSlug: string,
-		page = 1,
-		perPage = 20
+		opts?: { page?: number; perPage?: number; status?: string; level?: string }
 	): Promise<ListResponse<Issue>> {
-		return this.get<ListResponse<Issue>>(
-			`/projects/${projectSlug}/issues?page=${page}&per_page=${perPage}`
-		);
+		const page = opts?.page ?? 1;
+		const perPage = opts?.perPage ?? 20;
+		let path = `/projects/${projectSlug}/issues?page=${page}&per_page=${perPage}`;
+		if (opts?.status) path += `&status=${opts.status}`;
+		if (opts?.level) path += `&level=${opts.level}`;
+		return this.get<ListResponse<Issue>>(path);
 	}
 
 	async getIssue(issueId: string): Promise<Issue> {
