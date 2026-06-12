@@ -18,6 +18,10 @@ async fn test_pool() -> SqlitePool {
 
     let migration_sql = include_str!("../migrations/20260606000001_initial.sql");
     sqlx::raw_sql(migration_sql).execute(&pool).await.unwrap();
+    let migration_sql2 = include_str!("../migrations/20260606000002_alert_rules.sql");
+    sqlx::raw_sql(migration_sql2).execute(&pool).await.unwrap();
+    let migration_sql3 = include_str!("../migrations/20260612000001_project_archive.sql");
+    sqlx::raw_sql(migration_sql3).execute(&pool).await.unwrap();
 
     pool
 }

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import {
 		api,
 		type Project,
@@ -18,7 +20,8 @@
 	import { Separator } from '$lib/components/ui/separator/index.js';
 
 	let rules: AlertRule[] = $state([]);
-	let project: Project | null = $state(null);
+	let projects: Project[] = $state([]);
+	let selectedProject: string = $state('');
 	let loading = $state(true);
 	let error = $state('');
 	let showForm = $state(false);
@@ -30,15 +33,11 @@
 	let formCooldown = $state('300');
 
 	async function loadRules() {
+		if (!selectedProject) return;
+		loading = true;
+		error = '';
 		try {
-			const projects = await api.listProjects();
-			if (projects.length === 0) {
-				error = 'No projects found.';
-				loading = false;
-				return;
-			}
-			project = projects[0];
-			rules = await listAlertRules(project.slug);
+			rules = await listAlertRules(selectedProject);
 		} catch (e: any) {
 			error = e?.message || 'Failed to load rules';
 		} finally {
@@ -46,10 +45,38 @@
 		}
 	}
 
-	onMount(loadRules);
+	onMount(async () => {
+		try {
+			projects = await api.listProjects();
+			if (projects.length === 0) {
+				error = 'No projects found.';
+				loading = false;
+				return;
+			}
+
+			// Restore from URL or default to first
+			const queryProject = page.url.searchParams.get('project');
+			if (queryProject && projects.some(p => p.slug === queryProject)) {
+				selectedProject = queryProject;
+			} else {
+				selectedProject = projects[0].slug;
+			}
+
+			await loadRules();
+		} catch (e: any) {
+			error = e?.message || 'Failed to load';
+			loading = false;
+		}
+	});
+
+	function switchProject(slug: string) {
+		selectedProject = slug;
+		goto(`/rules?project=${slug}`, { replaceState: true });
+		loadRules();
+	}
 
 	async function handleCreate() {
-		if (!project || !formName.trim()) return;
+		if (!selectedProject || !formName.trim()) return;
 
 		const conditions: Record<string, unknown> = {};
 		if (formLevel) conditions.level = [formLevel];
@@ -59,7 +86,7 @@
 		if (formWebhookUrl.trim()) actionConfig.url = formWebhookUrl.trim();
 
 		try {
-			await createAlertRule(project.slug, {
+			await createAlertRule(selectedProject, {
 				name: formName.trim(),
 				conditions,
 				action_type: 'webhook',
@@ -100,7 +127,20 @@
 
 <div class="p-4 lg:p-6 space-y-4">
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Alert Rules</h1>
+		<div class="flex items-center gap-3">
+			<h1 class="text-2xl font-bold">Alert Rules</h1>
+			{#if projects.length > 1}
+				<select
+					class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+					value={selectedProject}
+					onchange={() => switchProject((event?.target as HTMLSelectElement).value)}
+				>
+					{#each projects as p}
+						<option value={p.slug}>{p.name}</option>
+					{/each}
+				</select>
+			{/if}
+		</div>
 		<Button onclick={() => (showForm = !showForm)} variant={showForm ? 'secondary' : 'default'}>
 			{showForm ? 'Cancel' : '+ New Rule'}
 		</Button>

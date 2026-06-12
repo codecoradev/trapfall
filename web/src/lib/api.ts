@@ -21,6 +21,7 @@ export interface Project {
 	name: string;
 	dsn: string;
 	created_at: string;
+	archived_at?: string;
 }
 
 export interface SetupStatus {
@@ -152,6 +153,29 @@ class ApiClient {
 		return this.get<Project>(`/projects/${slug}`);
 	}
 
+	async updateProject(slug: string, name: string): Promise<Project> {
+		return this.request<Project>(`/projects/${slug}`, {
+			method: 'PATCH',
+			body: JSON.stringify({ name })
+		});
+	}
+
+	async deleteProject(slug: string): Promise<void> {
+		await this.request<void>(`/projects/${slug}`, { method: 'DELETE' });
+	}
+
+	async archiveProject(slug: string): Promise<void> {
+		await this.post(`/projects/${slug}/archive`);
+	}
+
+	async unarchiveProject(slug: string): Promise<void> {
+		await this.request<void>(`/projects/${slug}/archive`, { method: 'DELETE' });
+	}
+
+	async rotateDsn(slug: string): Promise<Project> {
+		return this.post<Project>(`/projects/${slug}/rotate-dsn`);
+	}
+
 	// ── Issues ────────────────────────────────────────────────────────
 
 	async listIssues(
@@ -172,6 +196,20 @@ class ApiClient {
 
 	async setIssueStatus(issueId: string, status: IssueStatus): Promise<void> {
 		await this.post(`/issues/${issueId}/status`, { status });
+	}
+
+	// ── Search ────────────────────────────────────────────────────────
+
+	async searchIssues(
+		projectSlug: string,
+		opts?: { q: string; page?: number; perPage?: number; status?: string; level?: string }
+	): Promise<ListResponse<Issue>> {
+		const page = opts?.page ?? 1;
+		const perPage = opts?.perPage ?? 20;
+		let path = `/projects/${projectSlug}/search?q=${encodeURIComponent(opts?.q ?? '')}&page=${page}&per_page=${perPage}`;
+		if (opts?.status) path += `&status=${opts.status}`;
+		if (opts?.level) path += `&level=${opts.level}`;
+		return this.get<ListResponse<Issue>>(path);
 	}
 
 	// ── Events ────────────────────────────────────────────────────────
