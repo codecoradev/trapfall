@@ -3,16 +3,36 @@
 ## Quick Start
 
 ```bash
-docker pull ghcr.io/codecoradev/trapfall:0.0.3
-docker run -d -p 3000:3000 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:0.0.3
+docker pull ghcr.io/codecoradev/trapfall:latest
+docker run -d -p 3000:3000 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:latest
 ```
+
+## Image Details
+
+The Docker image is built on a **scratch** base with a statically-linked MUSL binary — total image size is **~6MB**.
+
+| Component | Size |
+|-----------|------|
+| Binary (static MUSL) | ~5MB |
+| Frontend (SPA) | ~400KB |
+| Base image | 0 (scratch) |
+
+Key technical details:
+- **TLS**: Uses rustls (pure Rust) — no OpenSSL dependency
+- **Builder**: `rust:1.86-alpine` with MUSL for fully static binary
+- **Runtime**: `FROM scratch` — zero OS overhead, minimal attack surface
+- **Multi-arch**: Supports `linux/amd64` and `linux/arm64`
 
 ## Docker Compose
 
 ```yaml
 services:
   trapfall:
-    image: ghcr.io/codecoradev/trapfall:0.0.3
+    image: ghcr.io/codecoradev/trapfall:latest
+    # For local development, uncomment to build from source:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: trapfall
     restart: unless-stopped
     ports:
@@ -27,10 +47,11 @@ services:
       serve
       --listen 0.0.0.0:3000
     healthcheck:
-      test: ["CMD", "trapfall", "--db", "/data/trapfall.db", "healthcheck"]
+      test: ["CMD", "/trapfall", "--db", "/data/trapfall.db", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
 volumes:
   trapfall-data:
@@ -45,10 +66,10 @@ The SQLite database is stored at `/data/trapfall.db` inside the container. Use a
 The container includes a built-in healthcheck:
 
 ```bash
-trapfall --db /data/trapfall.db healthcheck
+/trapfall --db /data/trapfall.db healthcheck
 ```
 
-Returns exit code 0 if the server is healthy.
+Returns exit code 0 if the server is healthy. Note: the binary is at `/trapfall` (scratch image has no PATH).
 
 ## Reverse Proxy (Production)
 

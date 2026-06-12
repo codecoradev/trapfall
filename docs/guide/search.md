@@ -1,44 +1,44 @@
 # Search
 
-TrapFall uses LIKE + sqlite_trigram for substring search across issue titles.
+Issue search is integrated directly into the **Issues** page — no separate search page needed.
 
 ## Using Search
 
-1. Go to **Search** page in the dashboard
-2. Enter your search query
-3. Results show matching issues from all projects
+1. Go to **Issues** in the navigation
+2. Type in the **Search issues...** input at the top
+3. Results update automatically after 300ms debounce
+4. Combine with filters: status tabs, level dropdown, and project selector
+
+## What's Searched
+
+Search matches against:
+- **Issue title** — the error type/message
+- **Culprit** — the function or module where the error occurred
+
+## Filters
+
+Filters work together with search:
+
+| Filter | Options |
+|--------|---------|
+| **Status** | All, Unresolved, Resolved, Ignored |
+| **Level** | All, Fatal, Error, Warning, Info, Debug |
+| **Project** | Select from dropdown |
+
+## URL State
+
+All search and filter state is saved in the URL query params, so you can share filtered views:
+
+```
+/issues?project=web-app&q=TypeError&status=unresolved&level=error
+```
 
 ## API
 
-```bash
-curl -b cookie "http://localhost:3000/api/0/projects/my-app/search?q=TypeError&page=1&per_page=20"
+Search is also available via API:
+
+```
+GET /api/0/projects/{slug}/search?q=TypeError&status=unresolved&level=error&limit=20&page=1
 ```
 
-**Response:**
-```json
-{
-  "data": [{ "id": "...", "title": "TypeError: Cannot read property 'x'", "level": "error" }],
-  "total": 1,
-  "page": 1,
-  "per_page": 20
-}
-```
-
-## How It Works
-
-- **LIKE** — standard SQL substring matching
-- **sqlite_trigram** — trigram index for faster LIKE queries on large datasets
-- Searches across issue **titles** only
-- Case-insensitive
-
-## Performance
-
-For typical use (< 100K issues), search is fast. For larger datasets, the trigram index keeps queries performant without the overhead of FTS5.
-
-## What TrapFall Search is NOT
-
-- ❌ Full-text search across event bodies, stack traces, or breadcrumbs
-- ❌ Faceted search (by tag, user, browser, etc.)
-- ❌ Regex or structured queries
-
-These may be added in future versions.
+Returns the same `ListResponse<Issue>` format as the issues endpoint.

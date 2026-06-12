@@ -22,7 +22,7 @@ First-run setup wizard. Creates admin user + default project. Only available whe
 {
   "user": { "id": "...", "email": "...", "name": "...", "role": "admin" },
   "project_slug": "default",
-  "dsn": "https://<key>@host/1"
+  "dsn": "https://<key>@host/<project_id>"
 }
 ```
 
@@ -57,7 +57,9 @@ Check if setup is needed.
 
 ### `GET /api/0/projects`
 
-List all projects. **Auth required.**
+List all projects (active + archived). **Auth required.**
+
+**Response field:** `archived_at` is `null` for active projects, ISO timestamp for archived.
 
 ### `POST /api/0/projects`
 
@@ -70,6 +72,28 @@ Create a project. **Auth required.**
 ### `GET /api/0/projects/{slug}`
 
 Get project detail including DSN.
+
+### `PATCH /api/0/projects/{slug}`
+
+Rename project. **Auth required.**
+
+**Request:** `{ "name": "New Name" }`
+
+### `DELETE /api/0/projects/{slug}`
+
+Permanently delete a project. Only works for **archived** projects. Returns `409` if project is still active. Cascades to all related data (events, issues, alert rules, history).
+
+### `POST /api/0/projects/{slug}/archive`
+
+Archive a project (soft-delete). Hides from main list, still ingests events.
+
+### `DELETE /api/0/projects/{slug}/archive`
+
+Unarchive a project. Restores to active list.
+
+### `POST /api/0/projects/{slug}/rotate-dsn`
+
+Regenerate DSN key. Old key is immediately revoked. Returns updated project.
 
 ## Issues
 
