@@ -40,15 +40,16 @@ pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-/// Generate a DSN with the given public base URL.
+/// Generate a DSN with the given public base URL and project ID.
 /// Format: `https://{key}@{host}/{project_id}`
-pub fn generate_dsn_with(host: &str) -> String {
+pub fn generate_dsn_with(host: &str, project_id: &str) -> String {
     let key = Uuid::new_v4();
-    format!("https://{key}@{host}/1")
+    format!("https://{key}@{host}/{project_id}")
 }
 
 /// Generate a DSN with placeholder host.
 /// When creating projects via CLI (no request context), we use a generic DSN.
+/// Note: project_id is set to "1" as placeholder — should be regenerated with real project ID.
 pub fn generate_dsn() -> String {
-    generate_dsn_with("localhost:3000")
+    generate_dsn_with("localhost:3000", "1")
 }

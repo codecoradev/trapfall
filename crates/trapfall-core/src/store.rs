@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use trapfall_proto::{Issue, IssueStatus, Level, Project, StoredEvent};
 
-use crate::{generate_dsn, generate_dsn_with, new_id};
+use crate::{generate_dsn_with, new_id};
 
 #[derive(Clone)]
 pub struct Store {
@@ -28,7 +28,7 @@ impl Store {
 
     pub async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {
         let id = new_id();
-        let dsn = generate_dsn_with(host);
+        let dsn = generate_dsn_with(host, &id);
         let dsn_key = extract_dsn_key(&dsn);
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -82,7 +82,16 @@ impl Store {
     }
 
     pub async fn rotate_dsn(&self, project_id: &str) -> Result<String> {
-        let new_dsn = generate_dsn();
+        // Get current project to extract host
+        let project = self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found"))?;
+        // Extract host from existing DSN
+        let host = project
+            .dsn
+            .split('@')
+            .nth(1)
+            .map(|s| s.split('/').next().unwrap_or("localhost:3000"))
+            .unwrap_or("localhost:3000");
+        let new_dsn = generate_dsn_with(host, project_id);
         let new_dsn_key = extract_dsn_key(&new_dsn);
         sqlx::query("UPDATE projects SET dsn = ?, dsn_key = ? WHERE id = ?")
             .bind(&new_dsn)
