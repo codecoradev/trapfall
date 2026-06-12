@@ -30,7 +30,7 @@ docker compose up -d
 
 ## Setup Wizard
 
-1. Open **http://localhost:3000** in your browser
+1. Open **`http://localhost:3000`** in your browser
 2. The setup wizard appears on first run
 3. Create your admin account (email, name, password)
 4. A default project is created automatically with a DSN

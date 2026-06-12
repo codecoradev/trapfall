@@ -32,3 +32,6 @@ Thumbs.db
 # Profiling
 flamegraph.svg
 perf.data
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
