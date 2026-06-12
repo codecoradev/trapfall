@@ -5,7 +5,7 @@ All notable changes to TrapFall are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.4] - 2026-06-12
 
 ### Added
 
@@ -26,10 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Issue pagination**: page numbers + showing X–Y of Z (#149)
 - **Project selector**: Issues and Rules pages now have project dropdown (#148, #154)
 - **Back navigation**: issue detail page has Back button + ESC keyboard shortcut (#147)
+- **VitePress docs**: 9 screenshots added to all guide pages
+- **CF Pages**: auto-deploy docs to Cloudflare Pages on release
 
 ### Fixed
 
-- **Setup session**: setup wizard did not create session cookie — "Go to Dashboard" redirected to login (#160)
+- **Search UX**: Enter to search + 1.5s debounce (was 300ms per-keystroke). Empty state shows project name hint (#158)
 
 - **DSN bug**: `generate_dsn_with()` used hardcoded `/1` instead of project UUID — Sentry SDKs POSTed to wrong URL, all events silently dropped (#151)
 - **Rules page**: hardcoded to `projects[0]` — could not manage rules for other projects (#154)
