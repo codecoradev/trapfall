@@ -93,12 +93,12 @@ async fn setup_status(State(state): State<AppState>) -> Json<SetupStatus> {
     Json(SetupStatus { needs_setup: !has })
 }
 
-/// POST /api/setup — Create first admin + default project.
+/// POST /api/setup — Create first admin + default project + auto-login.
 async fn setup(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(req): Json<SetupRequest>,
-) -> Result<(StatusCode, Json<SetupResponse>), (StatusCode, Json<AuthErrorJson>)> {
+) -> Result<(StatusCode, [(String, String); 1], Json<SetupResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = Store::new(state.pool);
 
     // Only allow when no users exist
@@ -119,7 +119,25 @@ async fn setup(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: e.to_string() })))?;
 
-    Ok((StatusCode::CREATED, Json(SetupResponse { user: user.into(), project_slug: project.slug, dsn: project.dsn })))
+    // Create session so user is logged in after setup
+    let session = store.create_session(&user.id).await.map_err(|e| {
+        tracing::warn!("Failed to create setup session: {e}");
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: "Internal error".into() }))
+    })?;
+
+    let cookie = format!(
+        "{}={}; HttpOnly; {}; SameSite=Strict; Path=/; Max-Age={}",
+        SESSION_COOKIE,
+        session.token,
+        state.config.cookie_secure_flag(),
+        COOKIE_MAX_AGE
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        [("set-cookie".to_string(), cookie)],
+        Json(SetupResponse { user: user.into(), project_slug: project.slug, dsn: project.dsn }),
+    ))
 }
 
 /// POST /api/auth/login — Authenticate and set session cookie.

@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Setup session**: setup wizard did not create session cookie — "Go to Dashboard" redirected to login (#160)
+
 - **DSN bug**: `generate_dsn_with()` used hardcoded `/1` instead of project UUID — Sentry SDKs POSTed to wrong URL, all events silently dropped (#151)
 - **Rules page**: hardcoded to `projects[0]` — could not manage rules for other projects (#154)
 
