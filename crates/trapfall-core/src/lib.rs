@@ -32,6 +32,8 @@ pub async fn open_pool(db_path: &str) -> Result<SqlitePool> {
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql")).execute(pool).await?;
     sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260608000001_drop_api_keys.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260612000001_project_archive.sql")).execute(pool).await?;
     Ok(())
 }
 

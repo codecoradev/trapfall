@@ -41,43 +41,48 @@ impl Store {
             .execute(&self.pool)
             .await?;
 
-        Ok(Project { id, slug: slug.to_string(), name: name.to_string(), dsn, created_at: now })
+        Ok(Project { id, slug: slug.to_string(), name: name.to_string(), dsn, created_at: now, archived_at: None })
     }
 
     pub async fn get_project_by_slug(&self, slug: &str) -> Result<Option<Project>> {
-        let row =
-            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE slug = ?")
-                .bind(slug)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE slug = ?",
+        )
+        .bind(slug)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(Into::into))
     }
 
     pub async fn get_project_by_id(&self, id: &str) -> Result<Option<Project>> {
-        let row = sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(Into::into))
     }
 
     pub async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
-        let row =
-            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects WHERE dsn_key = ?")
-                .bind(sentry_key)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE dsn_key = ?",
+        )
+        .bind(sentry_key)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(Into::into))
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
-        let rows =
-            sqlx::query_as::<_, ProjectRow>("SELECT id, slug, name, dsn, created_at FROM projects ORDER BY created_at")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects ORDER BY created_at",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
@@ -100,6 +105,45 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(new_dsn)
+    }
+
+    /// Archive a project (soft-delete) — stops ingesting, hides from main list.
+    pub async fn archive_project(&self, project_id: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("UPDATE projects SET archived_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Unarchive a project — restores to active list.
+    pub async fn unarchive_project(&self, project_id: &str) -> Result<()> {
+        sqlx::query("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project_id).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Permanently delete a project and all related data.
+    /// Should only be called for archived projects.
+    pub async fn delete_project(&self, project_id: &str) -> Result<bool> {
+        // Delete in order: events → issues → alert_rules/history → project
+        sqlx::query("DELETE FROM events WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM issues WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM alert_history WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM alert_rules WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
+        let result = sqlx::query("DELETE FROM projects WHERE id = ?").bind(project_id).execute(&self.pool).await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update project name.
+    pub async fn update_project(&self, project_id: &str, name: &str) -> Result<Project> {
+        sqlx::query("UPDATE projects SET name = ? WHERE id = ?")
+            .bind(name)
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found after update"))
     }
 
     // ── Issues ──────────────────────────────────────────────────────────
@@ -440,11 +484,12 @@ struct ProjectRow {
     name: String,
     dsn: String,
     created_at: String,
+    archived_at: Option<String>,
 }
 
 impl From<ProjectRow> for Project {
     fn from(r: ProjectRow) -> Self {
-        Self { id: r.id, slug: r.slug, name: r.name, dsn: r.dsn, created_at: r.created_at }
+        Self { id: r.id, slug: r.slug, name: r.name, dsn: r.dsn, created_at: r.created_at, archived_at: r.archived_at }
     }
 }
 

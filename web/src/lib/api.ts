@@ -21,6 +21,7 @@ export interface Project {
 	name: string;
 	dsn: string;
 	created_at: string;
+	archived_at?: string;
 }
 
 export interface SetupStatus {
@@ -150,6 +151,29 @@ class ApiClient {
 
 	async getProject(slug: string): Promise<Project> {
 		return this.get<Project>(`/projects/${slug}`);
+	}
+
+	async updateProject(slug: string, name: string): Promise<Project> {
+		return this.request<Project>(`/projects/${slug}`, {
+			method: 'PATCH',
+			body: JSON.stringify({ name })
+		});
+	}
+
+	async deleteProject(slug: string): Promise<void> {
+		await this.request<void>(`/projects/${slug}`, { method: 'DELETE' });
+	}
+
+	async archiveProject(slug: string): Promise<void> {
+		await this.post(`/projects/${slug}/archive`);
+	}
+
+	async unarchiveProject(slug: string): Promise<void> {
+		await this.request<void>(`/projects/${slug}/archive`, { method: 'DELETE' });
+	}
+
+	async rotateDsn(slug: string): Promise<Project> {
+		return this.post<Project>(`/projects/${slug}/rotate-dsn`);
 	}
 
 	// ── Issues ────────────────────────────────────────────────────────

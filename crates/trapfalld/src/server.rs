@@ -39,7 +39,9 @@ pub fn router(state: AppState) -> Router {
     // ── Dashboard API (auth-protected) ───────────────────────────
     let dashboard_api = Router::new()
         .route("/projects", get(list_projects).post(create_project))
-        .route("/projects/{slug}", get(get_project))
+        .route("/projects/{slug}", get(get_project).delete(delete_project).patch(update_project))
+        .route("/projects/{slug}/archive", post(archive_project).delete(unarchive_project))
+        .route("/projects/{slug}/rotate-dsn", post(rotate_dsn))
         .route("/projects/{slug}/issues", get(list_issues))
         .route("/issues/{issue_id}", get(get_issue))
         .route("/issues/{issue_id}/status", post(set_issue_status))
@@ -120,6 +122,100 @@ async fn get_project(
         Some(p) => Ok(Json(p)),
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateProjectRequest {
+    name: Option<String>,
+}
+
+async fn update_project(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Json(req): Json<UpdateProjectRequest>,
+) -> Result<Json<trapfall_proto::Project>, StatusCode> {
+    let store = Store::new(state.pool);
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(name) = req.name {
+        let updated = store.update_project(&project.id, &name).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok(Json(updated))
+    } else {
+        Ok(Json(project))
+    }
+}
+
+async fn delete_project(State(state): State<AppState>, Path(slug): Path<String>) -> StatusCode {
+    let store = Store::new(state.pool);
+    let project = match store.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        _ => return StatusCode::NOT_FOUND,
+    };
+    // Only allow deleting archived projects
+    if project.archived_at.is_none() {
+        return StatusCode::CONFLICT;
+    }
+    match store.delete_project(&project.id).await {
+        Ok(true) => StatusCode::OK,
+        Ok(false) => StatusCode::NOT_FOUND,
+        Err(e) => {
+            tracing::error!("Failed to delete project: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+async fn archive_project(State(state): State<AppState>, Path(slug): Path<String>) -> StatusCode {
+    let store = Store::new(state.pool);
+    let project = match store.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        _ => return StatusCode::NOT_FOUND,
+    };
+    match store.archive_project(&project.id).await {
+        Ok(()) => StatusCode::OK,
+        Err(e) => {
+            tracing::error!("Failed to archive project: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+async fn unarchive_project(State(state): State<AppState>, Path(slug): Path<String>) -> StatusCode {
+    let store = Store::new(state.pool);
+    let project = match store.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        _ => return StatusCode::NOT_FOUND,
+    };
+    match store.unarchive_project(&project.id).await {
+        Ok(()) => StatusCode::OK,
+        Err(e) => {
+            tracing::error!("Failed to unarchive project: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+async fn rotate_dsn(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<trapfall_proto::Project>, StatusCode> {
+    let store = Store::new(state.pool);
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    store.rotate_dsn(&project.id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Re-fetch to get updated DSN
+    let updated = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(updated))
 }
 
 async fn ingest_envelope(
