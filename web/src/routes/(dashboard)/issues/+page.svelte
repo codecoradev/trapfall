@@ -33,6 +33,9 @@
 
 	let wsUnsub: (() => void) | null = $state(null);
 
+	let searchQuery: string = $state('');
+	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 	const statuses = ['unresolved', 'resolved', 'ignored'];
 	const levels = ['fatal', 'error', 'warning', 'info', 'debug'];
 
@@ -41,6 +44,7 @@
 		if (selectedProject) params.set('project', selectedProject);
 		if (filterStatus) params.set('status', filterStatus);
 		if (filterLevel) params.set('level', filterLevel);
+		if (searchQuery.trim()) params.set('q', searchQuery.trim());
 		if (currentPage > 1) params.set('page', String(currentPage));
 		return `/issues?${params.toString()}`;
 	}
@@ -50,14 +54,26 @@
 		loading = true;
 		error = '';
 		try {
-			const res = await api.listIssues(selectedProject, {
-				page: currentPage,
-				perPage,
-				status: filterStatus || undefined,
-				level: filterLevel || undefined,
-			});
-			issues = res.data;
-			totalIssues = res.total;
+			if (searchQuery.trim()) {
+				const res = await api.searchIssues(selectedProject, {
+					q: searchQuery.trim(),
+					page: currentPage,
+					perPage,
+					status: filterStatus || undefined,
+					level: filterLevel || undefined,
+				});
+				issues = res.data;
+				totalIssues = res.total;
+			} else {
+				const res = await api.listIssues(selectedProject, {
+					page: currentPage,
+					perPage,
+					status: filterStatus || undefined,
+					level: filterLevel || undefined,
+				});
+				issues = res.data;
+				totalIssues = res.total;
+			}
 		} catch (e: any) {
 			error = e?.message || 'Failed to load issues';
 		} finally {
@@ -86,6 +102,7 @@
 	function clearFilters() {
 		filterStatus = '';
 		filterLevel = '';
+		searchQuery = '';
 		currentPage = 1;
 		navigate();
 	}
@@ -111,6 +128,7 @@
 			selectedProject = (qp && projects.some(p => p.slug === qp)) ? qp : projects[0].slug;
 			filterStatus = sp.get('status') || '';
 			filterLevel = sp.get('level') || '';
+			searchQuery = sp.get('q') || '';
 			currentPage = parseInt(sp.get('page') || '1', 10) || 1;
 
 			await loadIssues();
@@ -131,7 +149,7 @@
 				const idx = issues.findIndex((i) => i.id === incoming.id);
 				if (idx >= 0) {
 					issues[idx] = incoming;
-				} else if (currentPage === 1 && !filterStatus && !filterLevel) {
+				} else if (currentPage === 1 && !filterStatus && !filterLevel && !searchQuery) {
 					issues.unshift(incoming);
 				}
 				issues = issues;
@@ -171,8 +189,25 @@
 		</div>
 	</div>
 
-	<!-- Filters -->
+	<!-- Search + Filters -->
 	<div class="flex flex-wrap items-center gap-2">
+		<!-- Search input -->
+		<input
+			type="text"
+			value={searchQuery}
+			oninput={(e) => {
+				searchQuery = (e.target as HTMLInputElement).value;
+				clearTimeout(debounceTimer);
+				debounceTimer = setTimeout(() => {
+					currentPage = 1;
+					navigate();
+				}, 300);
+			}
+			}
+			placeholder="Search issues..."
+			class="h-8 w-48 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
+		/>
+
 		<!-- Status tabs -->
 		<div class="flex rounded-md border overflow-hidden">
 			<button
@@ -203,9 +238,9 @@
 			{/each}
 		</select>
 
-		{#if filterStatus || filterLevel}
+		{#if filterStatus || filterLevel || searchQuery}
 			<Button variant="ghost" size="sm" class="h-8 text-xs" onclick={clearFilters}>
-				Clear filters
+				Clear all
 			</Button>
 		{/if}
 
@@ -232,7 +267,7 @@
 		<div class="flex flex-col items-center justify-center py-16 text-center">
 			<p class="text-lg font-medium text-muted-foreground">No issues found</p>
 			<p class="text-sm text-muted-foreground mt-1">
-				{filterStatus || filterLevel ? 'Try adjusting your filters.' : 'Send errors to your DSN and they\'ll appear here.'}
+				{searchQuery || filterStatus || filterLevel ? 'Try adjusting your search or filters.' : 'Send errors to your DSN and they\'ll appear here.'}
 			</p>
 		</div>
 	{:else}
