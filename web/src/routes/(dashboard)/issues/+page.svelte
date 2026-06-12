@@ -201,11 +201,18 @@
 				debounceTimer = setTimeout(() => {
 					currentPage = 1;
 					navigate();
-				}, 300);
+				}, 1500);
 			}
 			}
-			placeholder="Search issues..."
-			class="h-8 w-48 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
+			onkeydown={(e) => {
+				if (e.key === 'Enter') {
+					clearTimeout(debounceTimer);
+					currentPage = 1;
+					navigate();
+				}
+			}}
+			placeholder="Search... (Enter to search)"
+			class="h-8 w-56 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
 		/>
 
 		<!-- Status tabs -->
@@ -267,7 +274,13 @@
 		<div class="flex flex-col items-center justify-center py-16 text-center">
 			<p class="text-lg font-medium text-muted-foreground">No issues found</p>
 			<p class="text-sm text-muted-foreground mt-1">
-				{searchQuery || filterStatus || filterLevel ? 'Try adjusting your search or filters.' : 'Send errors to your DSN and they\'ll appear here.'}
+				{#if searchQuery}
+					No results for "{searchQuery}" in {projects.find(p => p.slug === selectedProject)?.name || selectedProject}. Try switching projects.
+				{:else if filterStatus || filterLevel}
+					Try adjusting your filters.
+				{:else}
+					Send errors to your DSN and they'll appear here.
+				{/if}
 			</p>
 		</div>
 	{:else}
