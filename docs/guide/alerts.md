@@ -2,6 +2,8 @@
 
 Configure webhook alerts when errors match conditions you define.
 
+![Rules page](/images/docs-07-rules.png)
+
 ## Creating Alert Rules
 
 1. Go to **Rules** page in the dashboard

@@ -2,6 +2,8 @@
 
 TrapFall supports multiple projects, each with its own DSN and isolated error data. This lets you track errors separately for your web app, mobile app, backend API, etc.
 
+![Projects page](/images/docs-05-projects.png)
+
 ## Creating Projects
 
 ### From Dashboard
@@ -49,6 +51,8 @@ Archiving hides a project from the main view and stops it from appearing in proj
 ### Delete Permanently
 
 Deletion is permanent and irreversible. Only archived projects can be deleted:
+
+![Project actions menu](/images/docs-06-project-menu.png)
 
 1. Archive the project first
 2. Go to the **Archived** tab
