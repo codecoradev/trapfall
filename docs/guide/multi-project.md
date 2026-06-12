@@ -18,11 +18,44 @@ TrapFall supports multiple projects, each with its own DSN and isolated error da
 ```bash
 trapfall project add "My Web App"
 # Output: Project created: My Web App (my-web-app)
-#         DSN: https://abc123@localhost:3000/1
 
 trapfall project add "Mobile App" mobile-app
 # With custom slug
 ```
+
+## Managing Projects
+
+### Rename
+
+Click the **⋮** menu on a project card → **Rename**. Enter the new name and save.
+
+### Rotate DSN
+
+If a DSN key is compromised:
+
+1. Click **⋮** → **Rotate DSN**
+2. The old DSN key is immediately revoked
+3. Copy the new DSN and update your SDK configuration
+
+### Archive
+
+Archiving hides a project from the main view and stops it from appearing in project selectors:
+
+1. Click **⋮** → **Archive**
+2. The project moves to the **Archived** tab
+3. Ingest still works but the project is out of sight
+4. To restore: go to **Archived** tab → **⋮** → **Unarchive**
+
+### Delete Permanently
+
+Deletion is permanent and irreversible. Only archived projects can be deleted:
+
+1. Archive the project first
+2. Go to the **Archived** tab
+3. Click **⋮** → **Delete permanently**
+4. Confirm the deletion
+
+This removes the project and **all** its data: issues, events, alert rules, and alert history.
 
 ## Project Isolation
 
@@ -44,12 +77,15 @@ Each project has its own:
 
 Each service points to its own DSN. All errors flow into the same TrapFall instance but are isolated per project.
 
-## Rotating DSN Keys
+## API Endpoints
 
-If a DSN key is compromised:
-
-```bash
-trapfall project rotate-dsn my-web-app
-```
-
-This generates a new DSN. Update your SDK configuration with the new DSN.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/0/projects` | List all projects |
+| `POST` | `/api/0/projects` | Create project |
+| `GET` | `/api/0/projects/{slug}` | Get project |
+| `PATCH` | `/api/0/projects/{slug}` | Rename project (`{ "name": "..." }`) |
+| `DELETE` | `/api/0/projects/{slug}` | Delete permanently (archived only) |
+| `POST` | `/api/0/projects/{slug}/archive` | Archive project |
+| `DELETE` | `/api/0/projects/{slug}/archive` | Unarchive project |
+| `POST` | `/api/0/projects/{slug}/rotate-dsn` | Regenerate DSN key |

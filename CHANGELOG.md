@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Project CRUD**: archive, unarchive, permanent delete, rename, rotate DSN (#152)
+  - Active/Archived tabs on Projects page
+  - Kebab menu (⋮) per project card with Rename, Rotate DSN, Archive actions
+  - Archived projects: Unarchive, Delete permanently
+  - `PATCH /api/0/projects/{slug}` — rename project
+  - `DELETE /api/0/projects/{slug}` — permanent delete (archived only)
+  - `POST /api/0/projects/{slug}/archive` — archive project
+  - `DELETE /api/0/projects/{slug}/archive` — unarchive project
+  - `POST /api/0/projects/{slug}/rotate-dsn` — regenerate DSN key
+- **Issue search**: search bar on Issues page with debounce (#153)
+  - Merged Search page into Issues — one unified view
+  - Search by title/culprit with status/level filters combined
+  - Removed separate Search nav link (4 items: Issues, Projects, Rules, Settings)
+- **Issue filters**: status tabs (All/Unresolved/Resolved/Ignored) + level dropdown (#149)
+- **Issue pagination**: page numbers + showing X–Y of Z (#149)
+- **Project selector**: Issues and Rules pages now have project dropdown (#148, #154)
+- **Back navigation**: issue detail page has Back button + ESC keyboard shortcut (#147)
+
+### Fixed
+
+- **DSN bug**: `generate_dsn_with()` used hardcoded `/1` instead of project UUID — Sentry SDKs POSTed to wrong URL, all events silently dropped (#151)
+- **Rules page**: hardcoded to `projects[0]` — could not manage rules for other projects (#154)
+
+### Changed
+
+- **Docker image**: shrunk from **112MB to 5.75MB** (-95%)
+  - Switched reqwest TLS from native-tls (OpenSSL) to rustls (pure Rust)
+  - Builder: `debian` → `alpine` (MUSL static binary)
+  - Runtime: `debian-slim` → `scratch` (zero OS overhead)
+- **Migration**: `project_archive` made idempotent via `pragma_table_info` check
+
 ## [0.0.3] - 2026-06-11
 
 ### Fixed

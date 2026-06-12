@@ -42,24 +42,24 @@ Use the DSN with any Sentry SDK:
 
 ```js
 // JavaScript / Node.js
-Sentry.init({ dsn: "https://<key>@your-server:3000/1" });
+Sentry.init({ dsn: "https://<key>@your-server:3000/<project_id>" });
 ```
 
 ```python
 # Python
 import sentry_sdk
-sentry_sdk.init(dsn="https://<key>@your-server:3000/1")
+sentry_sdk.init(dsn="https://<key>@your-server:3000/<project_id>")
 ```
 
 ```rust
 // Rust
-sentry::init(("https://<key>@your-server:3000/1", sentry::ClientOptions::default()));
+sentry::init(("https://<key>@your-server:3000/<project_id>", sentry::ClientOptions::default()));
 ```
 
 ```dart
 // Flutter / Dart
 await SentryFlutter.init((options) => {
-  options.dsn = "https://<key>@your-server:3000/1",
+  options.dsn = "https://<key>@your-server:3000/<project_id>",
 });
 ```
 
