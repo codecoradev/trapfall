@@ -2,28 +2,31 @@
 
 Self-hosted error capture engine — Rust + SvelteKit 5. Sentry SDK compatible (drop-in DSN swap).
 
-Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them in a real-time dashboard, get webhook alerts. Single binary, single SQLite file.
+Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them in a real-time dashboard, get webhook alerts. Single binary, single SQLite file, **6MB Docker image**.
 
 ## Features
 
 - **Sentry-compatible ingest** — Drop-in DSN swap, works with any Sentry SDK (Rust, Python, JS, Flutter, etc.)
 - **Multi-project support** — Web, mobile, API — each with its own DSN and isolated errors
+- **Project management** — Archive, unarchive, rename, rotate DSN, permanent delete
 - **Real-time dashboard** — SvelteKit 5 + Tailwind v4 + shadcn-svelte
+- **Issue search + filters** — Search by title/culprit, filter by status and level, pagination
 - **WebSocket updates** — Live issue feed, no refresh needed
 - **Blake3 fingerprinting** — Automatic error grouping and deduplication
-- **Alert rules** — Condition-based webhooks with cooldown
+- **Alert rules** — Per-project condition-based webhooks with cooldown
 - **Full-text search** — LIKE + sqlite_trigram substring search
+- **OpenAPI docs** — Swagger UI at `/api/docs`
 - **MCP server** — 12 AI agent tools via stdio JSON-RPC
+- **Tiny Docker image** — 5.75MB (scratch + MUSL static binary + rustls)
 - **One-command deploy** — Docker Compose with persistent volume
-- **Single binary** — Embedded SPA, no external dependencies
 
 ## Quick Start
 
 ### Docker (recommended)
 
 ```bash
-docker pull ghcr.io/codecoradev/trapfall:0.0.3
-docker run -p 3000:3000 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:0.0.3
+docker pull ghcr.io/codecoradev/trapfall:latest
+docker run -p 3000:3000 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:latest
 ```
 
 Or with Docker Compose:
@@ -73,6 +76,14 @@ Create separate projects for each app/service:
 3. Each project gets a unique DSN
 4. Point each SDK to its own DSN — errors are isolated per project
 
+### Managing Projects
+
+- **Rename**: Click ⋮ menu → Rename
+- **Rotate DSN**: Click ⋮ menu → Rotate DSN (old key revoked immediately)
+- **Archive**: Click ⋮ menu → Archive (hides from main view, preserves data)
+- **Delete**: Archive first, then Delete permanently from Archived tab
+- **Unarchive**: Restore archived projects from the Archived tab
+
 ## SDK Integration
 
 Works with any Sentry SDK — just swap the DSN to point to your TrapFall server:
@@ -80,27 +91,27 @@ Works with any Sentry SDK — just swap the DSN to point to your TrapFall server
 ### Rust
 
 ```rust
-sentry::init(("https://<key>@your-server:3000/1", sentry::ClientOptions::default()));
+sentry::init(("https://<key>@your-server:3000/<project_id>", sentry::ClientOptions::default()));
 ```
 
 ### Python
 
 ```python
 import sentry_sdk
-sentry_sdk.init(dsn="https://<key>@your-server:3000/1")
+sentry_sdk.init(dsn="https://<key>@your-server:3000/<project_id>")
 ```
 
 ### JavaScript / Node.js
 
 ```js
-Sentry.init({ dsn: "https://<key>@your-server:3000/1" });
+Sentry.init({ dsn: "https://<key>@your-server:3000/<project_id>" });
 ```
 
 ### Flutter / Dart
 
 ```dart
 await SentryFlutter.init((options) => {
-  options.dsn = "https://<key>@your-server:3000/1",
+  options.dsn = "https://<key>@your-server:3000/<project_id>",
 });
 ```
 
@@ -142,16 +153,23 @@ See [.env.example](.env.example) for full reference.
 - `GET /api/0/projects` — List projects
 - `POST /api/0/projects` — Create project
 - `GET /api/0/projects/{slug}` — Get project
-- `GET /api/0/projects/{slug}/issues` — List issues
+- `PATCH /api/0/projects/{slug}` — Rename project
+- `DELETE /api/0/projects/{slug}` — Delete project (archived only)
+- `POST /api/0/projects/{slug}/archive` — Archive project
+- `DELETE /api/0/projects/{slug}/archive` — Unarchive project
+- `POST /api/0/projects/{slug}/rotate-dsn` — Rotate DSN key
+- `GET /api/0/projects/{slug}/issues` — List issues (with filters + pagination)
+- `GET /api/0/projects/{slug}/search?q=...` — Search issues
 - `GET /api/0/issues/{id}` — Get issue detail
 - `POST /api/0/issues/{id}/status` — Set issue status (resolved/unresolved/ignored)
 - `GET /api/0/issues/{id}/events` — List events
-- `GET /api/0/projects/{slug}/search?q=...` — Search issues
 - `GET /api/0/ws` — WebSocket real-time updates
 - `GET /api/0/projects/{slug}/rules` — Alert rules
 - `POST /api/0/projects/{slug}/rules` — Create alert rule
 - `DELETE /api/0/rules/{id}` — Delete alert rule
 - `POST /api/0/rules/{id}/toggle` — Enable/disable rule
+- `GET /api/docs` — Swagger UI
+- `GET /api/docs/openapi.yaml` — OpenAPI spec
 
 ### System
 - `GET /health` — Health check
@@ -169,8 +187,9 @@ See [.env.example](.env.example) for full reference.
 |-------|------|
 | Backend | Rust, Axum 0.8, SQLite (sqlx), tokio |
 | Frontend | SvelteKit 5, Tailwind v4, shadcn-svelte |
+| TLS | rustls (pure Rust, no OpenSSL) |
 | Fingerprinting | blake3 |
-| Build | Cargo workspace, npm, Docker multi-stage |
+| Build | Cargo workspace, npm, Docker multi-stage (scratch + MUSL) |
 | CI | GitHub Actions (10 checks including Cora Review, Trivy, Cargo Audit) |
 
 ## Architecture
@@ -181,7 +200,22 @@ HTTP → mpsc(256) → digest(batch=16) → broadcast(64) + webhook(64)
               SQLite (WAL, single-writer)
 ```
 
-Single binary with embedded SPA via `rust-embed`. Single-writer SQLite in WAL mode with `synchronous=NORMAL`.
+Single binary with embedded SPA via `rust-embed`. Single-writer SQLite in WAL mode with `synchronous=NORMAL`. Docker image built on `scratch` with statically-linked MUSL binary — no OS layer, minimal attack surface.
+
+## Documentation
+
+Full documentation at [docs/](docs/) (VitePress):
+
+- [Getting Started](docs/guide/getting-started.md)
+- [Docker Deployment](docs/guide/docker.md)
+- [Multi-Project Management](docs/guide/multi-project.md)
+- [SDK Integration](docs/guide/sdk-integration.md)
+- [Search & Filters](docs/guide/search.md)
+- [Alert Rules](docs/guide/alerts.md)
+- [API Reference](docs/guide/api.md)
+- [Configuration](docs/guide/configuration.md)
+- [Security](docs/guide/security.md)
+- [MCP Server](docs/guide/mcp.md)
 
 ## License
 
