@@ -8,7 +8,7 @@
 
 ```bash
 # Pull the image
-docker pull ghcr.io/codecoradev/trapfall:0.0.3
+docker pull ghcr.io/codecoradev/trapfall:latest
 
 # Run with persistent data
 docker run -d \
@@ -16,7 +16,7 @@ docker run -d \
   -p 3000:3000 \
   -v trapfall-data:/data \
   -e TRAPFALL_SECURE_COOKIE=false \
-  ghcr.io/codecoradev/trapfall:0.0.3 \
+  ghcr.io/codecoradev/trapfall:latest \
   --db /data/trapfall.db serve --listen 0.0.0.0:3000
 ```
 
@@ -34,7 +34,19 @@ docker compose up -d
 2. The setup wizard appears on first run
 3. Create your admin account (email, name, password)
 4. A default project is created automatically with a DSN
-5. **Copy the DSN** — you'll need it for your SDK
+5. Click **"Go to Dashboard"** — you're automatically logged in
+
+![Login page](/images/docs-09-login.png)
+
+## First Look
+
+After setup, you'll land on the **Issues** page showing your default project:
+
+![Issues list](/images/docs-01-issues-list.png)
+
+Click any issue to see full details, stack trace, and event history:
+
+![Issue detail](/images/docs-02-issue-detail.png)
 
 ## Integrate with Your App
 

@@ -2,6 +2,14 @@
 
 All dashboard API routes are under `/api/0/`. Authentication is via `trapfall_session` cookie.
 
+## Interactive Docs
+
+TrapFall includes **Swagger UI** for exploring the API interactively at `/api/docs`:
+
+![Swagger UI](/images/docs-08-swagger.png)
+
+OpenAPI spec available at `/api/docs/openapi.yaml`.
+
 ## Auth
 
 ### `POST /api/0/setup`
