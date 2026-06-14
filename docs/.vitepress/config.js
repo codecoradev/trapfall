@@ -4,13 +4,16 @@ export default defineConfig({
   title: 'TrapFall',
   description: 'Lightweight self-hosted error capture engine',
   lang: 'en-US',
+  base: '/docs/trapfall/',
   cleanUrls: true,
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],
   themeConfig: {
     nav: [
+      { text: 'Codecora', link: 'https://codecora.dev' },
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Config', link: '/guide/configuration' },
       { text: 'API', link: '/guide/api' },
+      { text: 'GitHub', link: 'https://github.com/codecoradev/trapfall' },
     ],
     sidebar: [
       {
