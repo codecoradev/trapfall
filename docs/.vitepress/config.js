@@ -4,7 +4,6 @@ export default defineConfig({
   title: 'TrapFall',
   description: 'Lightweight self-hosted error capture engine',
   lang: 'en-US',
-  base: '/docs/trapfall/',
   cleanUrls: true,
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],
   themeConfig: {
