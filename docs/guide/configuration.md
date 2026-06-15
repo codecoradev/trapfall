@@ -7,7 +7,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TRAPFALL_DATABASE_URL` | `sqlite:trapfall.db` | Database URL (`sqlite:path.db` or `postgres://...`) |
-| `TRAPFALL_LISTEN` | `0.0.0.0:3000` | HTTP listen address |
+| `TRAPFALL_LISTEN` | `0.0.0.0:9090` | HTTP listen address |
 | `TRAPFALL_SECURE_COOKIE` | `true` | Set `false` for HTTP local dev |
 | `TRAPFALL_CORS_ORIGINS` | *(empty = allow all)* | Comma-separated origins |
 | `RUST_LOG` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |

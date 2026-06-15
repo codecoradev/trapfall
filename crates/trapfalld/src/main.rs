@@ -32,8 +32,8 @@ struct Cli {
 enum Commands {
     /// Start the HTTP server (default)
     Serve {
-        /// HTTP listen address
-        #[arg(short, long, default_value = "0.0.0.0:9090")]
+        /// HTTP listen address (default: 0.0.0.0:9090 or TRAPFALL_LISTEN env var)
+        #[arg(short, long, env = "TRAPFALL_LISTEN", default_value = "0.0.0.0:9090")]
         listen: String,
     },
     /// List all projects

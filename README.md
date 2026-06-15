@@ -2,7 +2,7 @@
 
 Self-hosted error capture engine — Rust + SvelteKit 5. Sentry SDK compatible (drop-in DSN swap).
 
-Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them in a real-time dashboard, get webhook alerts. Single binary, single SQLite file, **6MB Docker image**.
+Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them in a real-time dashboard, get webhook alerts. Single binary, SQLite or Postgres, **6MB Docker image**.
 
 ## Features
 
@@ -133,7 +133,7 @@ trapfall mcp                          # Start MCP server (stdio)
 | Env | Default | Description |
 |-----|---------|-------------|
 | `TRAPFALL_DATABASE_URL` | `sqlite:trapfall.db` | Database URL (`sqlite:` or `postgres://`, falls back to `--db`) |
-| `TRAPFALL_LISTEN` | `0.0.0.0:3000` | HTTP listen address |
+| `TRAPFALL_LISTEN` | `0.0.0.0:9090` | HTTP listen address (Docker uses 3000) |
 | `TRAPFALL_SECURE_COOKIE` | `true` | Set `false` for HTTP local dev |
 | `TRAPFALL_CORS_ORIGINS` | *(empty = allow all)* | Comma-separated origins for production |
 | `RUST_LOG` | `info` | Log level (`debug` for verbose) |
