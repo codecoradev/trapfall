@@ -8,7 +8,7 @@ Start the HTTP server.
 trapfall serve [OPTIONS]
 
 Options:
-  --listen <ADDR>    Listen address (default: 0.0.0.0:3000)
+  --listen <ADDR>    Listen address (default: 0.0.0.0:9090)
   --db <URL>         Database URL or path (default: trapfall.db)
 ```
 

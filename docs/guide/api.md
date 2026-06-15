@@ -137,7 +137,7 @@ List events for an issue.
 
 ### `GET /api/0/projects/{slug}/search?q=query&page=1&per_page=20`
 
-Substring search across issue titles. Uses LIKE + sqlite_trigram.
+Substring search across issue titles. Uses LIKE (SQLite) or ILIKE (Postgres).
 
 ## Ingest
 
