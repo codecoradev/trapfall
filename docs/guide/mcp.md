@@ -5,8 +5,10 @@ TrapFall includes a Model Context Protocol (MCP) server for AI agent integration
 ## Starting
 
 ```bash
-trapfall mcp --db trapfall.db
+trapfall mcp
 ```
+
+Uses the same database as set by `--db` flag or `TRAPFALL_DATABASE_URL` env var.
 
 Configure your AI client to run this command as an MCP server.
 

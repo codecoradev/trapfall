@@ -16,8 +16,9 @@ docker run -d \
   -p 3000:3000 \
   -v trapfall-data:/data \
   -e TRAPFALL_SECURE_COOKIE=false \
+  -e TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db \
   ghcr.io/codecoradev/trapfall:latest \
-  --db /data/trapfall.db serve --listen 0.0.0.0:3000
+  serve --listen 0.0.0.0:3000
 ```
 
 Or with Docker Compose:
@@ -89,7 +90,7 @@ npm run build
 cd ..
 
 # Run
-cargo run --release -p trapfalld -- --db trapfall.db serve --listen 0.0.0.0:3000
+cargo run --release -p trapfalld -- serve --listen 0.0.0.0:3000
 ```
 
 ## Next Steps
