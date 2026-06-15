@@ -5,6 +5,7 @@ pub mod auth;
 pub mod config;
 pub mod digest;
 pub mod metrics;
+pub mod migrate;
 pub mod rate_limit;
 pub mod retention;
 pub mod server;

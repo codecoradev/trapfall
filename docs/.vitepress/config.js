@@ -25,6 +25,7 @@ export default defineConfig({
           { text: 'SDK Integration', link: '/guide/sdk-integration' },
           { text: 'Docker', link: '/guide/docker' },
           { text: 'CLI Reference', link: '/guide/cli' },
+          { text: 'SQLite → Postgres Migration', link: '/guide/migration' },
           { text: 'API Reference', link: '/guide/api' },
           { text: 'Alert Rules', link: '/guide/alerts' },
           { text: 'Search', link: '/guide/search' },

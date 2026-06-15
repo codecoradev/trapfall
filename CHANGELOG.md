@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dialect: `$N` params, `ILIKE`, `BOOLEAN`, `ON CONFLICT DO UPDATE` upsert
   - Shared row types and helpers extracted to `common.rs` (DRY with SQLite)
   - Build: `cargo build --features postgres` compiles both backends
+- **Shared test suite** (#169): backend-agnostic tests covering all major operations
+  - 10 shared test functions in `tests/common.rs`
+  - SQLite runner: 11/11 tests pass on in-memory SQLite
+  - Postgres runner: gated behind `TEST_POSTGRES_URL` env var
+- **SQLite → Postgres migration tool** (#170): `trapfall db export/import/verify`
+  - Export all tables to JSONL format
+  - Import JSONL to Postgres with automatic schema setup
+  - Verify row counts and health check
+  - Migration guide in `docs/guide/migration.md`
 
 ## [0.0.5] - 2026-06-15
 

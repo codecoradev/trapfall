@@ -9,6 +9,10 @@ description = "TrapFall daemon binary — ties all crates together"
 name = "trapfall"
 path = "src/main.rs"
 
+[features]
+default = []
+postgres = ["trapfall_db/postgres"]
+
 [dependencies]
 trapfall_proto = { workspace = true }
 trapfall_core = { workspace = true }
