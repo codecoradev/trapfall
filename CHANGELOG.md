@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Postgres backend** (#168): full `PostgresBackend` implementation of `Database` trait
+  - `crates/trapfall-db/src/postgres.rs` — all 40+ trait methods
+  - Postgres migrations: `migrations/postgres/001_initial.sql`, `002_alert_rules.sql`
+  - `open_database("postgres://...")` now instantiates `PostgresBackend`
+  - `run_postgres_migrations()` for schema setup
+  - Dialect: `$N` params, `ILIKE`, `BOOLEAN`, `ON CONFLICT DO UPDATE` upsert
+  - Shared row types and helpers extracted to `common.rs` (DRY with SQLite)
+  - Build: `cargo build --features postgres` compiles both backends
+
 ## [0.0.5] - 2026-06-15
 
 ### Added

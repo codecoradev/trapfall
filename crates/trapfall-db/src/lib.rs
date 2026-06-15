@@ -17,15 +17,22 @@
 //!
 //! See epic #171 for the full multi-backend roadmap.
 
+pub mod common;
 pub mod error;
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
+#[cfg(feature = "postgres")]
+pub mod postgres;
+
 pub use error::DbError;
 
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteBackend;
+
+#[cfg(feature = "postgres")]
+pub use postgres::PostgresBackend;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -66,7 +73,8 @@ pub async fn open_database(url: &str) -> Result<Arc<dyn Database>> {
     if lower.starts_with("postgres:") || lower.starts_with("postgresql:") {
         #[cfg(feature = "postgres")]
         {
-            return Err(DbError::Backend("postgres backend is not yet implemented (Phase 3, issue #168)".into()).into());
+            let pool = open_postgres_pool(url).await?;
+            return Ok(Arc::new(PostgresBackend::new(pool)));
         }
         #[cfg(not(feature = "postgres"))]
         {
@@ -135,6 +143,26 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     if !has_archived_at {
         sqlx::query("ALTER TABLE projects ADD COLUMN archived_at TEXT DEFAULT NULL").execute(pool).await?;
     }
+    Ok(())
+}
+
+// ── Postgres pool + migrations ────────────────────────────────────────
+
+/// Open a Postgres connection pool.
+#[cfg(feature = "postgres")]
+async fn open_postgres_pool(url: &str) -> Result<sqlx::PgPool> {
+    use sqlx::postgres::PgPoolOptions;
+    let pool = PgPoolOptions::new().max_connections(8).connect(url).await?;
+    Ok(pool)
+}
+
+/// Run all Postgres database migrations (schema setup).
+///
+/// Idempotent — uses `CREATE TABLE IF NOT EXISTS`.
+#[cfg(feature = "postgres")]
+pub async fn run_postgres_migrations(pool: &sqlx::PgPool) -> Result<()> {
+    sqlx::query(include_str!("../migrations/postgres/001_initial.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../migrations/postgres/002_alert_rules.sql")).execute(pool).await?;
     Ok(())
 }
 
