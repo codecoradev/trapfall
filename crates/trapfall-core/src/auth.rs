@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 use crate::{new_id, store::Store};
 
+// Re-export row types from trapfall-db so auth handlers keep their existing shape.
+pub use trapfall_db::{StoredSession as Session, StoredUser as User};
+
 // ── Constants ──────────────────────────────────────────────────────────
 
 /// Argon2id: 19 MiB memory, 2 iterations, 1 parallelism (OWASP recommended).
@@ -34,18 +37,6 @@ const MIN_EMAIL_LEN: usize = 5;
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-/// User record.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
-pub struct User {
-    pub id: String,
-    pub email: String,
-    pub name: String,
-    #[serde(skip_serializing)]
-    pub password_hash: String,
-    pub role: String,
-    pub created_at: String,
-}
-
 /// Safe user info (no password_hash).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserInfo {
@@ -60,16 +51,6 @@ impl From<User> for UserInfo {
     fn from(u: User) -> Self {
         Self { id: u.id, email: u.email, name: u.name, role: u.role, created_at: u.created_at }
     }
-}
-
-/// Session record.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
-pub struct Session {
-    pub id: String,
-    pub user_id: String,
-    pub token: String,
-    pub expires_at: String,
-    pub created_at: String,
 }
 
 /// Auth attempt record.
@@ -133,12 +114,11 @@ pub fn validate_email(email: &str) -> Result<(), String> {
 // ── Store Auth Extensions (#18, #20) ──────────────────────────────────
 
 impl Store {
-    // ── Users (#18) ────────────────────────────────────────────────────
+    // ── Users (#18) ─────────────────────────────────────────────────────
 
     /// Check if any users exist (for setup wizard).
     pub async fn has_users(&self) -> Result<bool> {
-        let row: Option<(i64,)> = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_optional(self.pool()).await?;
-        Ok(row.map(|(c,)| c > 0).unwrap_or(false))
+        self.backend().has_users().await
     }
 
     /// Create a new user (admin for Solo MVP).
@@ -146,102 +126,56 @@ impl Store {
         validate_email(email).map_err(|e| anyhow::anyhow!(e))?;
         validate_password(password).map_err(|e| anyhow::anyhow!(e))?;
         let hash = hash_password(password)?;
-        let id = new_id();
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO users (id, email, name, password_hash, role, created_at) VALUES (?, ?, ?, ?, 'admin', ?)",
-        )
-        .bind(&id)
-        .bind(email)
-        .bind(name)
-        .bind(&hash)
-        .bind(&now)
-        .execute(self.pool())
-        .await?;
-
-        Ok(User {
-            id,
-            email: email.to_string(),
-            name: name.to_string(),
-            password_hash: hash,
-            role: "admin".to_string(),
-            created_at: now,
-        })
+        self.backend().create_user(email, name, &hash).await?;
+        let user = self
+            .backend()
+            .get_user_by_email(email)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("user not found after insert"))?;
+        Ok(user)
     }
 
     /// Get user by email.
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
-        let user = sqlx::query_as::<_, User>(
-            "SELECT id, email, name, password_hash, role, created_at FROM users WHERE email = ?",
-        )
-        .bind(email)
-        .fetch_optional(self.pool())
-        .await?;
-        Ok(user)
+        self.backend().get_user_by_email(email).await
     }
 
     /// Get user by ID.
     pub async fn get_user_by_id(&self, id: &str) -> Result<Option<User>> {
-        let user = sqlx::query_as::<_, User>(
-            "SELECT id, email, name, password_hash, role, created_at FROM users WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(self.pool())
-        .await?;
-        Ok(user)
+        self.backend().get_user_by_id(id).await
     }
 
     /// Update user password.
     pub async fn update_password(&self, user_id: &str, new_password: &str) -> Result<()> {
         validate_password(new_password).map_err(|e| anyhow::anyhow!(e))?;
         let hash = hash_password(new_password)?;
-        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
-            .bind(&hash)
-            .bind(user_id)
-            .execute(self.pool())
-            .await?;
-        Ok(())
+        self.backend().update_password(user_id, &hash).await
     }
 
-    // ── Sessions (#20) ─────────────────────────────────────────────────
+    // ── Sessions (#20) ──────────────────────────────────────────────────
 
     /// Create a new session for a user.
     pub async fn create_session(&self, user_id: &str) -> Result<Session> {
-        let id = new_id();
         let token = Uuid::new_v4().to_string();
         let now = Utc::now();
         let expires_at = (now + Duration::days(SESSION_DURATION_DAYS)).to_rfc3339();
         let created_at = now.to_rfc3339();
 
-        sqlx::query("INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(&id)
-            .bind(user_id)
-            .bind(&token)
-            .bind(&expires_at)
-            .bind(&created_at)
-            .execute(self.pool())
-            .await?;
+        self.backend().create_session(user_id, &token, &expires_at).await?;
 
-        Ok(Session { id, user_id: user_id.to_string(), token, expires_at, created_at })
+        Ok(Session { id: new_id(), user_id: user_id.to_string(), token, expires_at, created_at })
     }
 
     /// Get session by token (returns None if expired).
     pub async fn get_session(&self, token: &str) -> Result<Option<Session>> {
-        let session = sqlx::query_as::<_, Session>(
-            "SELECT id, user_id, token, expires_at, created_at FROM sessions WHERE token = ?",
-        )
-        .bind(token)
-        .fetch_optional(self.pool())
-        .await?;
+        let session = self.backend().get_session(token).await?;
 
         match session {
             Some(s) => {
-                // Check expiry
                 let expires = chrono::DateTime::parse_from_rfc3339(&s.expires_at);
                 match expires {
                     Ok(exp) => {
                         if exp.to_utc() < Utc::now() {
-                            // Expired — delete and return None
                             self.delete_session(&s.token).await?;
                             Ok(None)
                         } else {
@@ -257,56 +191,29 @@ impl Store {
 
     /// Delete a session (logout).
     pub async fn delete_session(&self, token: &str) -> Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE token = ?").bind(token).execute(self.pool()).await?;
-        Ok(())
+        self.backend().delete_session(token).await
     }
 
     /// Cleanup expired sessions.
     pub async fn cleanup_expired_sessions(&self) -> Result<u64> {
-        let now = Utc::now().to_rfc3339();
-        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?").bind(&now).execute(self.pool()).await?;
-        Ok(result.rows_affected())
+        self.backend().cleanup_expired_sessions().await
     }
 
-    // ── Auth Attempts (#18 — for brute-force #23) ──────────────────────
+    // ── Auth Attempts (#18 — for brute-force #23) ───────────────────────
 
     /// Record an auth attempt.
     pub async fn record_auth_attempt(&self, email: &str, ip: &str, success: bool) -> Result<()> {
-        let id = new_id();
-        let now = Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO auth_attempts (id, email, ip, success, created_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(&id)
-            .bind(email)
-            .bind(ip)
-            .bind(success)
-            .bind(&now)
-            .execute(self.pool())
-            .await?;
-        Ok(())
+        self.backend().record_auth_attempt(email, ip, success).await
     }
 
     /// Count failed auth attempts for an email in the last N minutes.
     pub async fn count_failed_attempts_email(&self, email: &str, minutes: i64) -> Result<i64> {
-        let cutoff = (Utc::now() - Duration::minutes(minutes)).to_rfc3339();
-        let row: Option<(i64,)> =
-            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE email = ? AND success = 0 AND created_at > ?")
-                .bind(email)
-                .bind(&cutoff)
-                .fetch_optional(self.pool())
-                .await?;
-        Ok(row.map(|(c,)| c).unwrap_or(0))
+        self.backend().count_failed_attempts_email(email, minutes).await
     }
 
     /// Count failed auth attempts for an IP in the last N minutes.
     pub async fn count_failed_attempts_ip(&self, ip: &str, minutes: i64) -> Result<i64> {
-        let cutoff = (Utc::now() - Duration::minutes(minutes)).to_rfc3339();
-        let row: Option<(i64,)> =
-            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE ip = ? AND success = 0 AND created_at > ?")
-                .bind(ip)
-                .bind(&cutoff)
-                .fetch_optional(self.pool())
-                .await?;
-        Ok(row.map(|(c,)| c).unwrap_or(0))
+        self.backend().count_failed_attempts_ip(ip, minutes).await
     }
 
     /// Authenticate a user: verify password + create session.
@@ -315,7 +222,6 @@ impl Store {
         // Check brute-force lockout
         let email_fails = self.count_failed_attempts_email(email, 15).await.unwrap_or(0);
         if email_fails >= 5 {
-            // Record attempt even when locked out
             let _ = self.record_auth_attempt(email, ip, false).await;
             return Err(AuthError::LockedOut);
         }
