@@ -7,7 +7,7 @@ description = "Search module — LIKE + trigram substring matching"
 
 [dependencies]
 trapfall_proto = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

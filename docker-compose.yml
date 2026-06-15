@@ -13,12 +13,13 @@ services:
     environment:
       - RUST_LOG=${RUST_LOG:-trapfall=info}
       - TRAPFALL_SECURE_COOKIE=${TRAPFALL_SECURE_COOKIE:-false}
+      # Database URL: sqlite path (default) or postgres://... (requires postgres feature)
+      - TRAPFALL_DATABASE_URL=${TRAPFALL_DATABASE_URL:-sqlite:/data/trapfall.db}
     command: >
-      --db /data/trapfall.db
       serve
       --listen 0.0.0.0:3000
     healthcheck:
-      test: ["CMD", "/trapfall", "--db", "/data/trapfall.db", "healthcheck"]
+      test: ["CMD", "/trapfall", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

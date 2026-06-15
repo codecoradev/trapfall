@@ -2550,6 +2550,7 @@ dependencies = [
  "trapfall_alert",
  "trapfall_core",
  "trapfall_dashboard",
+ "trapfall_db",
  "trapfall_ingest",
  "trapfall_mcp",
  "trapfall_proto",

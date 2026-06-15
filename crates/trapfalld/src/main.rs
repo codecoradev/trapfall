@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -13,9 +12,12 @@ use trapfalld::{AppState, Config, DigestTask, WsHub, spawn_alert_engine};
 #[derive(Parser, Debug)]
 #[command(name = "trapfall", version, about = "TrapFall error capture daemon")]
 struct Cli {
-    /// Database path (SQLite)
-    #[arg(short, long, global = true, default_value = "trapfall.db")]
-    db: PathBuf,
+    /// Database URL or path. Supports `sqlite:path.db` (default) and
+    /// `postgres://...` (requires `postgres` feature).
+    ///
+    /// Can also be set via `TRAPFALL_DATABASE_URL` env var.
+    #[arg(short, long, global = true, env = "TRAPFALL_DATABASE_URL", default_value = "trapfall.db")]
+    db: String,
 
     /// Log level
     #[arg(short, long, global = true, default_value = "info")]
@@ -72,7 +74,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let pool = trapfall_core::open_pool(&format!("sqlite:{}", cli.db.display())).await?;
+    // Resolve database URL: --db flag or TRAPFALL_DATABASE_URL env var.
+    // Bare paths default to SQLite (e.g. "trapfall.db" -> "sqlite:trapfall.db").
+    let db_url = trapfall_db::normalise_url(&cli.db);
+    info!("Opening database: {db_url}");
+
+    let backend = trapfall_db::open_database(&db_url).await?;
+    let pool = backend.sqlite_pool()?.clone();
     trapfall_core::run_migrations(&pool).await?;
 
     match cli.command.unwrap_or(Commands::Serve { listen: "0.0.0.0:9090".into() }) {
