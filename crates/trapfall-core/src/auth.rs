@@ -54,7 +54,7 @@ impl From<User> for UserInfo {
 }
 
 /// Auth attempt record.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct AuthAttempt {
     pub id: String,
     pub email: String,
@@ -301,9 +301,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_and_authenticate() {
-        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
-        crate::run_migrations(&pool).await.unwrap();
-        let store = Store::new(pool);
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        {
+            trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        }
+        let store = Store::new(backend);
 
         // No users initially
         assert!(!store.has_users().await.unwrap());
@@ -330,9 +332,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_brute_force_lockout() {
-        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
-        crate::run_migrations(&pool).await.unwrap();
-        let store = Store::new(pool);
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        {
+            trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        }
+        let store = Store::new(backend);
 
         store.create_user("lock@test.com", "Lock Test", "password123").await.unwrap();
 
@@ -348,9 +352,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_password() {
-        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
-        crate::run_migrations(&pool).await.unwrap();
-        let store = Store::new(pool);
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        {
+            trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        }
+        let store = Store::new(backend);
 
         store.create_user("pw@test.com", "PW Test", "oldpassword").await.unwrap();
 
@@ -371,9 +377,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_expiry_and_cleanup() {
-        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
-        crate::run_migrations(&pool).await.unwrap();
-        let store = Store::new(pool);
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        {
+            trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        }
+        let store = Store::new(backend);
 
         store.create_user("expire@test.com", "Expire Test", "password123").await.unwrap();
         let (session, _) = store.authenticate("expire@test.com", "password123", "127.0.0.1").await.unwrap();
@@ -411,9 +419,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_rejects_invalid_email() {
-        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
-        crate::run_migrations(&pool).await.unwrap();
-        let store = Store::new(pool);
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        {
+            trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        }
+        let store = Store::new(backend);
 
         let result = store.create_user("not-an-email", "Test", "password123").await;
         assert!(result.is_err());

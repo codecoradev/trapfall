@@ -1,23 +1,21 @@
 //! Alert engine — evaluates rules against incoming issues and dispatches webhooks.
 
-use sqlx::SqlitePool;
 use std::sync::LazyLock;
 use tokio::sync::mpsc;
-use trapfall_proto::{AlertRule, Issue};
-
 use trapfall_core::Store;
+use trapfall_proto::{AlertRule, Issue};
 
 /// Shared HTTP client for webhook dispatch — connection pooling.
 static REQWEST_CLIENT: LazyLock<reqwest::Client> =
     LazyLock::new(|| reqwest::Client::builder().pool_max_idle_per_host(4).build().unwrap_or_default());
 
 /// Spawn the alert engine background task.
-pub fn spawn_alert_engine(pool: SqlitePool, _buffer: usize) -> mpsc::UnboundedSender<Issue> {
+pub fn spawn_alert_engine(store: Store, _buffer: usize) -> mpsc::UnboundedSender<Issue> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Issue>();
 
     tokio::spawn(async move {
         while let Some(issue) = rx.recv().await {
-            if let Err(e) = process_issue(&pool, &issue).await {
+            if let Err(e) = process_issue(&store, &issue).await {
                 tracing::warn!("Alert engine error for issue {}: {e}", issue.id);
             }
         }
@@ -27,9 +25,7 @@ pub fn spawn_alert_engine(pool: SqlitePool, _buffer: usize) -> mpsc::UnboundedSe
     tx
 }
 
-async fn process_issue(pool: &SqlitePool, issue: &Issue) -> anyhow::Result<()> {
-    let store = Store::new(pool.clone());
-
+async fn process_issue(store: &Store, issue: &Issue) -> anyhow::Result<()> {
     let rules = store.get_enabled_rules_for_project(&issue.project_id).await?;
 
     for rule in rules {
@@ -37,7 +33,7 @@ async fn process_issue(pool: &SqlitePool, issue: &Issue) -> anyhow::Result<()> {
             continue;
         }
 
-        if is_cooling_down(pool, &rule.id, rule.cooldown_seconds).await? {
+        if store.backend().is_rule_cooling_down(&rule.id, rule.cooldown_seconds).await? {
             tracing::debug!("Rule {} on cooldown, skipping", rule.name);
             continue;
         }
@@ -93,25 +89,6 @@ fn matches_rule(rule: &AlertRule, issue: &Issue) -> bool {
     }
 
     true
-}
-
-async fn is_cooling_down(pool: &SqlitePool, rule_id: &str, cooldown_seconds: i64) -> anyhow::Result<bool> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT created_at FROM alert_history WHERE rule_id = ? AND status = 'sent' ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(rule_id)
-    .fetch_optional(pool)
-    .await?;
-
-    if let Some((last_fired,)) = row {
-        if let Ok(fired_time) = chrono::DateTime::parse_from_rfc3339(&last_fired) {
-            let elapsed =
-                chrono::Utc::now().signed_duration_since(fired_time.with_timezone(&chrono::Utc)).num_seconds();
-            return Ok(elapsed < cooldown_seconds);
-        }
-    }
-
-    Ok(false)
 }
 
 /// Best-effort webhook dispatch with SSRF protection.

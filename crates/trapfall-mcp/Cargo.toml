@@ -9,12 +9,13 @@ description = "MCP server — stdio transport, AI agent tools"
 trapfall_proto = { workspace = true }
 trapfall_core = { workspace = true }
 trapfall_search = { workspace = true }
-sqlx = { workspace = true, features = ["sqlite"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
 tokio = { workspace = true }
+trapfall_core = { workspace = true }
+trapfall_db = { workspace = true }

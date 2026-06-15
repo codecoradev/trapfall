@@ -2500,6 +2500,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "trapfall_core",
+ "trapfall_db",
  "trapfall_proto",
  "trapfall_search",
 ]
@@ -2520,10 +2521,10 @@ name = "trapfall_search"
 version = "0.0.5"
 dependencies = [
  "anyhow",
- "serde",
- "serde_json",
  "sqlx",
  "tokio",
+ "trapfall_core",
+ "trapfall_db",
  "trapfall_proto",
 ]
 

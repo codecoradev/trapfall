@@ -7,11 +7,11 @@ use serde_json::{Value, json};
 use crate::server::AppState;
 
 pub async fn metrics(State(state): State<AppState>) -> Json<Value> {
-    let pool = &state.pool;
+    let db = state.store.backend();
 
-    let issue_count = count_rows(pool, "issues").await;
-    let event_count = count_rows(pool, "events").await;
-    let project_count = count_rows(pool, "projects").await;
+    let issue_count = db.count_table("issues").await.unwrap_or(0);
+    let event_count = db.count_table("events").await.unwrap_or(0);
+    let project_count = db.count_table("projects").await.unwrap_or(0);
 
     Json(json!({
         "status": "ok",
@@ -21,16 +21,4 @@ pub async fn metrics(State(state): State<AppState>) -> Json<Value> {
             "events": event_count,
         }
     }))
-}
-
-/// Count rows using parameterized query — table name validated against whitelist.
-async fn count_rows(pool: &sqlx::SqlitePool, table: &str) -> i64 {
-    // Whitelist allowed table names to prevent SQL injection
-    let allowed = ["issues", "events", "projects", "alert_rules", "alert_history"];
-    if !allowed.contains(&table) {
-        return 0;
-    }
-    let query = format!("SELECT COUNT(*) as count FROM {table}");
-    let row: (i64,) = sqlx::query_as(&query).fetch_one(pool).await.unwrap_or((0,));
-    row.0
 }

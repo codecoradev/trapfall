@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use sqlx::SqlitePool;
+use trapfall_core::Store;
 
 /// Helper: build a JSON-RPC request.
 fn rpc_request(method: &str, params: Value) -> Value {
@@ -16,15 +16,22 @@ fn parse_response(output: &str) -> Value {
     serde_json::from_str(output).expect("valid JSON response")
 }
 
+/// Set up a store with migrated SQLite in-memory database.
+async fn setup_store() -> Store {
+    let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+    let pool = backend.sqlite_pool().unwrap();
+    trapfall_db::run_sqlite_migrations(pool).await.unwrap();
+    Store::new(backend)
+}
+
 #[tokio::test]
 async fn test_tools_list() {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    let store = trapfall_core::Store::new(pool.clone());
+    let store = setup_store().await;
 
     let req = rpc_request("tools/list", json!({}));
     let input = serde_json::to_string(&req).unwrap() + "\n";
 
-    let result = trapfall_mcp::handle_message(&input, &pool, &store).await;
+    let result = trapfall_mcp::handle_message(&input, &store).await;
     let resp = parse_response(&result);
 
     assert_eq!(resp["jsonrpc"], "2.0");
@@ -43,8 +50,7 @@ async fn test_tools_list() {
 
 #[tokio::test]
 async fn test_initialize() {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    let store = trapfall_core::Store::new(pool.clone());
+    let store = setup_store().await;
 
     let req = rpc_request(
         "initialize",
@@ -56,7 +62,7 @@ async fn test_initialize() {
     );
     let input = serde_json::to_string(&req).unwrap() + "\n";
 
-    let result = trapfall_mcp::handle_message(&input, &pool, &store).await;
+    let result = trapfall_mcp::handle_message(&input, &store).await;
     let resp = parse_response(&result);
 
     assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
@@ -65,13 +71,12 @@ async fn test_initialize() {
 
 #[tokio::test]
 async fn test_ping() {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    let store = trapfall_core::Store::new(pool.clone());
+    let store = setup_store().await;
 
     let req = rpc_request("ping", json!({}));
     let input = serde_json::to_string(&req).unwrap() + "\n";
 
-    let result = trapfall_mcp::handle_message(&input, &pool, &store).await;
+    let result = trapfall_mcp::handle_message(&input, &store).await;
     let resp = parse_response(&result);
 
     assert_eq!(resp["result"], json!({}));
@@ -79,13 +84,12 @@ async fn test_ping() {
 
 #[tokio::test]
 async fn test_unknown_method() {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    let store = trapfall_core::Store::new(pool.clone());
+    let store = setup_store().await;
 
     let req = rpc_request("nonexistent_method", json!({}));
     let input = serde_json::to_string(&req).unwrap() + "\n";
 
-    let result = trapfall_mcp::handle_message(&input, &pool, &store).await;
+    let result = trapfall_mcp::handle_message(&input, &store).await;
     let resp = parse_response(&result);
 
     assert!(resp["error"]["code"].is_number());
@@ -94,10 +98,9 @@ async fn test_unknown_method() {
 
 #[tokio::test]
 async fn test_malformed_json() {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    let store = trapfall_core::Store::new(pool.clone());
+    let store = setup_store().await;
 
-    let result = trapfall_mcp::handle_message("not valid json\n", &pool, &store).await;
+    let result = trapfall_mcp::handle_message("not valid json\n", &store).await;
     let resp = parse_response(&result);
 
     assert_eq!(resp["error"]["code"], -32700);
@@ -105,9 +108,8 @@ async fn test_malformed_json() {
 
 #[tokio::test]
 async fn test_list_projects_tool() {
-    let pool = setup_db().await;
+    let store = setup_store().await;
 
-    let store = trapfall_core::Store::new(pool.clone());
     let req = rpc_request(
         "tools/call",
         json!({
@@ -117,22 +119,11 @@ async fn test_list_projects_tool() {
     );
     let input = serde_json::to_string(&req).unwrap() + "\n";
 
-    let result = trapfall_mcp::handle_message(&input, &pool, &store).await;
+    let result = trapfall_mcp::handle_message(&input, &store).await;
     let resp = parse_response(&result);
 
     let content = resp["result"]["content"][0]["text"].as_str().unwrap();
     let projects: Vec<Value> = serde_json::from_str(content).unwrap();
     // Empty project list is valid — we just verify the tool doesn't crash
     assert_eq!(projects.len(), 0);
-}
-
-async fn setup_db() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    let migration_sql = include_str!("../../trapfalld/migrations/20260606000001_initial.sql");
-    sqlx::raw_sql(migration_sql).execute(&pool).await.unwrap();
-    let migration_sql2 = include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql");
-    sqlx::raw_sql(migration_sql2).execute(&pool).await.unwrap();
-    let migration_sql3 = include_str!("../../trapfalld/migrations/20260612000001_project_archive.sql");
-    sqlx::raw_sql(migration_sql3).execute(&pool).await.unwrap();
-    pool
 }

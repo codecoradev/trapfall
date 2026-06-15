@@ -7,12 +7,12 @@ use std::io::{BufRead, Write};
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use sqlx::{Row, SqlitePool};
+use trapfall_core::Store;
 use trapfall_proto::IssueStatus;
 
 /// Process a single JSON-RPC message and return the response string.
 /// Used by both the stdin server loop and integration tests.
-pub async fn handle_message(input: &str, pool: &SqlitePool, store: &trapfall_core::Store) -> String {
+pub async fn handle_message(input: &str, store: &Store) -> String {
     let msg: Value = match serde_json::from_str(input.trim()) {
         Ok(v) => v,
         Err(e) => {
@@ -29,7 +29,7 @@ pub async fn handle_message(input: &str, pool: &SqlitePool, store: &trapfall_cor
     let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let params = msg.get("params").cloned().unwrap_or(json!({}));
 
-    let result = handle_request(method, params, pool, store).await;
+    let result = handle_request(method, params, store).await;
 
     match result {
         Ok(val) => json!({ "jsonrpc": "2.0", "result": val, "id": id }),
@@ -39,8 +39,7 @@ pub async fn handle_message(input: &str, pool: &SqlitePool, store: &trapfall_cor
 }
 
 /// Run the MCP server, reading JSON-RPC from stdin and writing to stdout.
-pub async fn run_server(pool: SqlitePool) -> Result<()> {
-    let store = trapfall_core::Store::new(pool.clone());
+pub async fn run_server(store: Store) -> Result<()> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
@@ -55,7 +54,7 @@ pub async fn run_server(pool: SqlitePool) -> Result<()> {
             Err(_) => break,
         }
 
-        let response = handle_message(&line, &pool, &store).await;
+        let response = handle_message(&line, &store).await;
         writeln!(stdout, "{}", response)?;
         stdout.flush()?;
     }
@@ -65,12 +64,7 @@ pub async fn run_server(pool: SqlitePool) -> Result<()> {
 
 // ── JSON-RPC Dispatcher ────────────────────────────────────────────────
 
-async fn handle_request(
-    method: &str,
-    params: Value,
-    pool: &SqlitePool,
-    store: &trapfall_core::Store,
-) -> Result<Value, String> {
+async fn handle_request(method: &str, params: Value, store: &Store) -> Result<Value, String> {
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": "2024-11-05",
@@ -82,7 +76,7 @@ async fn handle_request(
         "tools/call" => {
             let tool_name = params.get("name").and_then(|n| n.as_str()).ok_or("missing tool name")?;
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            call_tool(tool_name, args, pool, store).await
+            call_tool(tool_name, args, store).await
         }
         "ping" => Ok(json!({})),
         _ => Err(format!("Unknown method: {method}")),
@@ -210,20 +204,20 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 
 // ── Tool Dispatcher ────────────────────────────────────────────────────
 
-async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn call_tool(name: &str, args: Value, store: &Store) -> Result<Value, String> {
     match name {
         "list_issues" => tool_list_issues(args, store).await,
         "get_issue" => tool_get_issue(args, store).await,
-        "get_event" => tool_get_event(args, pool).await,
+        "get_event" => tool_get_event(args, store).await,
         "set_status" => tool_set_status(args, store).await,
-        "search_issues" => tool_search_issues(args, pool, store).await,
+        "search_issues" => tool_search_issues(args, store).await,
         "list_projects" => tool_list_projects(store).await,
         "get_project" => tool_get_project(args, store).await,
-        "get_project_stats" => tool_get_project_stats(args, pool, store).await,
+        "get_project_stats" => tool_get_project_stats(args, store).await,
         "list_alert_rules" => tool_list_alert_rules(args, store).await,
         "list_events" => tool_list_events(args, store).await,
         "rotate_dsn" => tool_rotate_dsn(args, store).await,
-        "healthcheck" => tool_healthcheck(pool).await,
+        "healthcheck" => tool_healthcheck(store).await,
         _ => Err(format!("Unknown tool: {name}")),
     }
 }
@@ -231,7 +225,7 @@ async fn call_tool(name: &str, args: Value, pool: &SqlitePool, store: &trapfall_
 // ── Tool Implementations ───────────────────────────────────────────────
 
 /// Resolve project slug to project, or return error string.
-async fn resolve_slug(slug: &str, store: &trapfall_core::Store) -> Result<trapfall_proto::Project, String> {
+async fn resolve_slug(slug: &str, store: &Store) -> Result<trapfall_proto::Project, String> {
     store.get_project_by_slug(slug).await.map_err(|e| e.to_string())?.ok_or_else(|| "project not found".to_string())
 }
 
@@ -245,7 +239,7 @@ fn text_msg(msg: impl std::fmt::Display) -> Value {
     json!({ "content": [{ "type": "text", "text": msg.to_string() }] })
 }
 
-async fn tool_list_issues(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_list_issues(args: Value, store: &Store) -> Result<Value, String> {
     let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
     let project = resolve_slug(slug, store).await?;
 
@@ -273,36 +267,25 @@ async fn tool_list_issues(args: Value, store: &trapfall_core::Store) -> Result<V
     Ok(text_response(&result))
 }
 
-async fn tool_get_issue(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_get_issue(args: Value, store: &Store) -> Result<Value, String> {
     let id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
     let issue = store.get_issue(id).await.map_err(|e| e.to_string())?.ok_or("issue not found")?;
     Ok(text_response(&issue))
 }
 
-async fn tool_get_event(args: Value, pool: &SqlitePool) -> Result<Value, String> {
+async fn tool_get_event(args: Value, store: &Store) -> Result<Value, String> {
     let event_id = args.get("event_id").and_then(|v| v.as_str()).ok_or("missing event_id")?;
-    let row = sqlx::query("SELECT id, issue_id, project_id, data, received_at FROM events WHERE id = ?")
-        .bind(event_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("event not found")?;
+    let event = store.backend().get_event_raw(event_id).await.map_err(|e| e.to_string())?.ok_or("event not found")?;
 
-    let id: String = row.try_get("id").map_err(|e| e.to_string())?;
-    let issue_id: String = row.try_get("issue_id").map_err(|e| e.to_string())?;
-    let data: String = row.try_get("data").map_err(|e| e.to_string())?;
-    let received_at: String = row.try_get("received_at").map_err(|e| e.to_string())?;
-
-    let event_data: Value = serde_json::from_str(&data).unwrap_or(json!({}));
     Ok(text_response(&json!({
-        "id": id,
-        "issue_id": issue_id,
-        "received_at": received_at,
-        "event": event_data
+        "id": event.id,
+        "issue_id": event.issue_id,
+        "received_at": event.received_at,
+        "event": event.data,
     })))
 }
 
-async fn tool_set_status(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_set_status(args: Value, store: &Store) -> Result<Value, String> {
     let issue_id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
     let status_str = args.get("status").and_then(|v| v.as_str()).ok_or("missing status")?;
     let status: IssueStatus =
@@ -311,7 +294,7 @@ async fn tool_set_status(args: Value, store: &trapfall_core::Store) -> Result<Va
     Ok(text_msg(format!("Issue {issue_id} status set to {status_str}")))
 }
 
-async fn tool_search_issues(args: Value, pool: &SqlitePool, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_search_issues(args: Value, store: &Store) -> Result<Value, String> {
     let query = args.get("query").and_then(|v| v.as_str()).ok_or("missing query")?;
     let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
 
@@ -321,7 +304,7 @@ async fn tool_search_issues(args: Value, pool: &SqlitePool, store: &trapfall_cor
         None
     };
 
-    let issues = trapfall_search::search_issues(pool, query, project_id.as_deref(), None, None, limit, 0)
+    let issues = trapfall_search::search_issues(store, query, project_id.as_deref(), None, None, limit, 0)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -342,7 +325,7 @@ async fn tool_search_issues(args: Value, pool: &SqlitePool, store: &trapfall_cor
     Ok(text_response(&results))
 }
 
-async fn tool_list_projects(store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_list_projects(store: &Store) -> Result<Value, String> {
     let projects = store.list_projects().await.map_err(|e| e.to_string())?;
     let list: Vec<Value> = projects
         .iter()
@@ -351,7 +334,7 @@ async fn tool_list_projects(store: &trapfall_core::Store) -> Result<Value, Strin
     Ok(text_response(&list))
 }
 
-async fn tool_get_project(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_get_project(args: Value, store: &Store) -> Result<Value, String> {
     let slug = args.get("slug").and_then(|v| v.as_str()).ok_or("missing slug")?;
     let project = resolve_slug(slug, store).await?;
     Ok(text_response(&json!({
@@ -362,14 +345,15 @@ async fn tool_get_project(args: Value, store: &trapfall_core::Store) -> Result<V
     })))
 }
 
-async fn tool_get_project_stats(args: Value, pool: &SqlitePool, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_get_project_stats(args: Value, store: &Store) -> Result<Value, String> {
     let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
     let project = resolve_slug(slug, store).await?;
 
-    let total = count_issues(pool, &project.id, None, None).await?;
-    let unresolved = count_issues(pool, &project.id, Some("unresolved"), None).await?;
-    let errors = count_issues(pool, &project.id, None, Some("error")).await?;
-    let fatal = count_issues(pool, &project.id, None, Some("fatal")).await?;
+    let total = store.backend().count_issues(&project.id, None, None).await.map_err(|e| e.to_string())?;
+    let unresolved =
+        store.backend().count_issues(&project.id, Some("unresolved"), None).await.map_err(|e| e.to_string())?;
+    let errors = store.backend().count_issues(&project.id, None, Some("error")).await.map_err(|e| e.to_string())?;
+    let fatal = store.backend().count_issues(&project.id, None, Some("fatal")).await.map_err(|e| e.to_string())?;
 
     Ok(text_response(&json!({
         "project": project.slug,
@@ -380,32 +364,7 @@ async fn tool_get_project_stats(args: Value, pool: &SqlitePool, store: &trapfall
     })))
 }
 
-/// Count issues for a project with optional status/level filters (parameterized).
-async fn count_issues(
-    pool: &SqlitePool,
-    project_id: &str,
-    status: Option<&str>,
-    level: Option<&str>,
-) -> Result<i64, String> {
-    let mut sql = String::from("SELECT COUNT(*) FROM issues WHERE project_id = ?");
-    if status.is_some() {
-        sql.push_str(" AND status = ?");
-    }
-    if level.is_some() {
-        sql.push_str(" AND level = ?");
-    }
-
-    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(project_id);
-    if let Some(s) = status {
-        q = q.bind(s);
-    }
-    if let Some(l) = level {
-        q = q.bind(l);
-    }
-    q.fetch_one(pool).await.map_err(|e| e.to_string())
-}
-
-async fn tool_list_alert_rules(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_list_alert_rules(args: Value, store: &Store) -> Result<Value, String> {
     let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
     let project = resolve_slug(slug, store).await?;
     let rules = store.list_alert_rules(&project.id).await.map_err(|e| e.to_string())?;
@@ -425,7 +384,7 @@ async fn tool_list_alert_rules(args: Value, store: &trapfall_core::Store) -> Res
     Ok(text_response(&list))
 }
 
-async fn tool_list_events(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_list_events(args: Value, store: &Store) -> Result<Value, String> {
     let issue_id = args.get("issue_id").and_then(|v| v.as_str()).ok_or("missing issue_id")?;
     let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
     let events = store.list_events(issue_id, limit, 0).await.map_err(|e| e.to_string())?;
@@ -434,16 +393,16 @@ async fn tool_list_events(args: Value, store: &trapfall_core::Store) -> Result<V
     Ok(text_response(&list))
 }
 
-async fn tool_rotate_dsn(args: Value, store: &trapfall_core::Store) -> Result<Value, String> {
+async fn tool_rotate_dsn(args: Value, store: &Store) -> Result<Value, String> {
     let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
     let project = resolve_slug(slug, store).await?;
     let new_key = store.rotate_dsn(&project.id).await.map_err(|e| e.to_string())?;
     Ok(text_msg(format!("DSN rotated for {}. New key: {}...{}", slug, &new_key[..8], &new_key[new_key.len() - 4..])))
 }
 
-async fn tool_healthcheck(pool: &SqlitePool) -> Result<Value, String> {
-    let ok: i64 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await.map_err(|e| e.to_string())?;
-    Ok(text_msg(format!("Healthy (db={})", ok)))
+async fn tool_healthcheck(store: &Store) -> Result<Value, String> {
+    let ok = store.backend().ping().await.map_err(|e| e.to_string())?;
+    Ok(text_msg(format!("Healthy (db={})", if ok { 1 } else { 0 })))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

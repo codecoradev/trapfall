@@ -156,6 +156,15 @@ impl Database for SqliteBackend {
         self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found after update"))
     }
 
+    async fn set_project_webhook(&self, project_slug: &str, webhook_url: &str) -> Result<()> {
+        sqlx::query("UPDATE projects SET webhook_url = ? WHERE slug = ?")
+            .bind(webhook_url)
+            .bind(project_slug)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // ── Issues ─────────────────────────────────────────────────────────
 
     async fn upsert_issue(

@@ -2,47 +2,29 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use sqlx::SqlitePool;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tower::ServiceExt;
 
 use std::path::PathBuf;
 
+use trapfall_core::Store;
 use trapfalld::rate_limit::RateLimiter;
 use trapfalld::server::router;
 use trapfalld::{AppState, Config, WsHub};
 
-async fn test_pool() -> SqlitePool {
-    let options = SqliteConnectOptions::new().filename(":memory:").create_if_missing(true);
-    let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.unwrap();
-
-    let migration_sql = include_str!("../migrations/20260606000001_initial.sql");
-    sqlx::raw_sql(migration_sql).execute(&pool).await.unwrap();
-    let migration_sql2 = include_str!("../migrations/20260606000002_alert_rules.sql");
-    sqlx::raw_sql(migration_sql2).execute(&pool).await.unwrap();
-    let migration_sql3 = include_str!("../migrations/20260612000001_project_archive.sql");
-    sqlx::raw_sql(migration_sql3).execute(&pool).await.unwrap();
-
-    pool
+async fn test_store() -> Store {
+    let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+    let pool = backend.sqlite_pool().unwrap();
+    trapfall_db::run_sqlite_migrations(pool).await.unwrap();
+    Store::new(backend)
 }
 
-async fn seed_project(pool: &SqlitePool) -> String {
+async fn seed_project(store: &Store) -> String {
     let slug = "test-project";
-    let id = uuid::Uuid::new_v4().to_string();
-    let dsn = format!("https://abc123@localhost:9090/{slug}");
-
-    sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn) VALUES (?, ?, ?, ?, ?)")
-        .bind(&id)
-        .bind(slug)
-        .bind("Test Project")
-        .bind("abc123")
-        .bind(&dsn)
-        .execute(pool)
-        .await
-        .unwrap();
-
-    // Return the UUID (used in ingest URL path)
-    id
+    let project = store.create_project_with_host(slug, "Test Project", "localhost:9090").await.unwrap();
+    // Override DSN key to match test auth header
+    let pool = store.backend().sqlite_pool().unwrap();
+    sqlx::query("UPDATE projects SET dsn_key = 'abc123' WHERE slug = ?").bind(slug).execute(pool).await.unwrap();
+    project.id
 }
 
 fn make_envelope_body(exception_type: &str, message: &str) -> Vec<u8> {
@@ -54,7 +36,7 @@ fn make_envelope_body(exception_type: &str, message: &str) -> Vec<u8> {
     format!("{envelope_header}\n{item_header}\n{event_json}").into_bytes()
 }
 
-fn make_state(pool: SqlitePool, rate_limiter: RateLimiter) -> AppState {
+fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
     let (tx, rx) = tokio::sync::mpsc::channel(100);
     // Keep rx alive by spawning a dummy consumer
     tokio::spawn(async move {
@@ -67,13 +49,13 @@ fn make_state(pool: SqlitePool, rate_limiter: RateLimiter) -> AppState {
         cors_origins: Vec::new(),
         secure_cookie: false,
     };
-    AppState { pool, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
+    AppState { store, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
 }
 
 #[tokio::test]
 async fn health_check_returns_ok() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     let req = Request::builder().uri("/health").body(Body::empty()).unwrap();
@@ -84,9 +66,9 @@ async fn health_check_returns_ok() {
 
 #[tokio::test]
 async fn ingest_accepts_valid_envelope_with_dsn_key() {
-    let pool = test_pool().await;
-    let project_id = seed_project(&pool).await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     let body = make_envelope_body("TypeError", "Cannot read property 'x' of undefined");
@@ -104,9 +86,9 @@ async fn ingest_accepts_valid_envelope_with_dsn_key() {
 
 #[tokio::test]
 async fn ingest_rejects_without_auth() {
-    let pool = test_pool().await;
-    let project_id = seed_project(&pool).await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     let body = make_envelope_body("Error", "test");
@@ -123,8 +105,8 @@ async fn ingest_rejects_without_auth() {
 
 #[tokio::test]
 async fn ingest_404_for_unknown_project() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     let body = make_envelope_body("Error", "test");
@@ -142,11 +124,11 @@ async fn ingest_404_for_unknown_project() {
 
 #[tokio::test]
 async fn rate_limit_returns_429() {
-    let pool = test_pool().await;
-    let project_id = seed_project(&pool).await;
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
 
     // Very restrictive: 2 burst, no refill
-    let state = make_state(pool, RateLimiter::new(2.0, 0.0));
+    let state = make_state(store, RateLimiter::new(2.0, 0.0));
     let app = router(state);
 
     let body = make_envelope_body("Error", "test");
@@ -180,8 +162,8 @@ async fn rate_limit_returns_429() {
 
 #[tokio::test]
 async fn setup_status_needs_setup() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     let req = Request::builder().uri("/api/0/setup").body(Body::empty()).unwrap();
@@ -195,8 +177,8 @@ async fn setup_status_needs_setup() {
 
 #[tokio::test]
 async fn setup_creates_admin_and_project() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     let req = Request::builder()
@@ -217,8 +199,8 @@ async fn setup_creates_admin_and_project() {
 
 #[tokio::test]
 async fn setup_forbidden_after_first_user() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     // First setup
@@ -244,8 +226,8 @@ async fn setup_forbidden_after_first_user() {
 
 #[tokio::test]
 async fn login_returns_session_cookie() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     // Setup first
@@ -278,8 +260,8 @@ async fn login_returns_session_cookie() {
 
 #[tokio::test]
 async fn login_rejects_wrong_password() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     // Setup
@@ -304,8 +286,8 @@ async fn login_rejects_wrong_password() {
 
 #[tokio::test]
 async fn protected_route_rejects_without_cookie() {
-    let pool = test_pool().await;
-    let state = make_state(pool, RateLimiter::default());
+    let store = test_store().await;
+    let state = make_state(store, RateLimiter::default());
     let app = router(state);
 
     // /api/0/auth/me is now under the protected nest

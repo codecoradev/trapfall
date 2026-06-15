@@ -39,7 +39,7 @@ pub async fn ws_handler(
     // Auth check: validate session cookie
     let token = crate::auth::extract_session_token(&headers);
     if let Some(token) = token {
-        let store = trapfall_core::Store::new(state.pool.clone());
+        let store = state.store.clone();
         if store.get_session(&token).await.is_ok_and(|s| s.is_some()) {
             return ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub.clone()));
         }
