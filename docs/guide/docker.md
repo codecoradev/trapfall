@@ -42,12 +42,12 @@ services:
     environment:
       - RUST_LOG=trapfall=info
       - TRAPFALL_SECURE_COOKIE=false  # Set true for HTTPS
+      - TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db
     command: >
-      --db /data/trapfall.db
       serve
       --listen 0.0.0.0:3000
     healthcheck:
-      test: ["CMD", "/trapfall", "--db", "/data/trapfall.db", "healthcheck"]
+      test: ["CMD", "/trapfall", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -66,7 +66,7 @@ The SQLite database is stored at `/data/trapfall.db` inside the container. Use a
 The container includes a built-in healthcheck:
 
 ```bash
-/trapfall --db /data/trapfall.db healthcheck
+/trapfall healthcheck
 ```
 
 Returns exit code 0 if the server is healthy. Note: the binary is at `/trapfall` (scratch image has no PATH).

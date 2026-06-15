@@ -6,11 +6,31 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRAPFALL_DB` | `trapfall.db` | SQLite database path |
+| `TRAPFALL_DATABASE_URL` | `sqlite:trapfall.db` | Database URL (`sqlite:path.db` or `postgres://...`) |
 | `TRAPFALL_LISTEN` | `0.0.0.0:3000` | HTTP listen address |
 | `TRAPFALL_SECURE_COOKIE` | `true` | Set `false` for HTTP local dev |
 | `TRAPFALL_CORS_ORIGINS` | *(empty = allow all)* | Comma-separated origins |
 | `RUST_LOG` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+
+## Database URL
+
+TrapFall supports selecting a database backend via URL scheme:
+
+```bash
+# SQLite (default) — bare paths auto-prefixed with sqlite:
+TRAPFALL_DATABASE_URL=trapfall.db               # → sqlite:trapfall.db
+TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db   # explicit
+
+# Postgres (requires postgres Cargo feature)
+TRAPFALL_DATABASE_URL=postgres://user:pass@host:5432/trapfall
+```
+
+The `--db` CLI flag takes precedence over the env var:
+
+```bash
+trapfall --db /custom/path.db serve
+trapfall --db sqlite:/data/trapfall.db serve
+```
 
 ## Local Development
 
@@ -34,12 +54,12 @@ RUST_LOG=trapfall=info
 
 ## Docker Compose
 
-The included `docker-compose.yml` is pre-configured for development:
+The included `docker-compose.yml` is pre-configured:
 
 ```yaml
 services:
   trapfall:
-    image: ghcr.io/codecoradev/trapfall:0.0.3
+    image: ghcr.io/codecoradev/trapfall:0.0.5
     ports:
       - "3000:3000"
     volumes:
@@ -47,7 +67,8 @@ services:
     environment:
       - RUST_LOG=trapfall=debug
       - TRAPFALL_SECURE_COOKIE=false
-    command: --db /data/trapfall.db serve --listen 0.0.0.0:3000
+      - TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db
+    command: serve --listen 0.0.0.0:3000
 ```
 
 ## Database

@@ -46,7 +46,7 @@ Download from [GitHub Releases](https://github.com/codecoradev/trapfall/releases
 
 ```bash
 # Linux (x86_64)
-tar xzf trapfall-x86_64-unknown-linux-gnu-v0.0.3.tar.gz
+tar xzf trapfall-x86_64-unknown-linux-gnu-v0.0.5.tar.gz
 ./trapfall --db trapfall.db serve --listen 0.0.0.0:3000
 ```
 
@@ -131,7 +131,7 @@ trapfall mcp                          # Start MCP server (stdio)
 
 | Env | Default | Description |
 |-----|---------|-------------|
-| `TRAPFALL_DB` | `trapfall.db` | SQLite database path |
+| `TRAPFALL_DATABASE_URL` | `sqlite:trapfall.db` | Database URL (`sqlite:` or `postgres://`, falls back to `--db`) |
 | `TRAPFALL_LISTEN` | `0.0.0.0:3000` | HTTP listen address |
 | `TRAPFALL_SECURE_COOKIE` | `true` | Set `false` for HTTP local dev |
 | `TRAPFALL_CORS_ORIGINS` | *(empty = allow all)* | Comma-separated origins for production |
