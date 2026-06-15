@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/trapfall-proto",
+    "crates/trapfall-db",
     "crates/trapfall-core",
     "crates/trapfall-ingest",
     "crates/trapfall-search",
@@ -61,6 +62,9 @@ serde_jsonrpc = "0.2"
 thiserror = "2"
 anyhow = "1"
 
+# Async trait
+async-trait = "0.1"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 
@@ -75,6 +79,7 @@ rust-embed = { version = "8", features = ["include-exclude"] }
 
 # Internal crates
 trapfall_proto = { path = "crates/trapfall-proto" }
+trapfall_db = { path = "crates/trapfall-db" }
 trapfall_core = { path = "crates/trapfall-core" }
 trapfall_ingest = { path = "crates/trapfall-ingest" }
 trapfall_search = { path = "crates/trapfall-search" }
