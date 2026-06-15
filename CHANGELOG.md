@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-06-15
+
 ### Added
 
+- **Database trait abstraction** (#186): extract `Database` trait into `trapfall-db` crate
+  - All SQL moved from `Store` into `SqliteBackend` implementations
+  - `Store` becomes a thin facade over `dyn Database`
+  - Foundation for multi-backend support (Postgres in Phase 3)
 - **Database connection factory** (#167): `open_database(url)` detects URL scheme
   (`sqlite:` or `postgres:`) and instantiates the correct backend
   - `TRAPFALL_DATABASE_URL` env var support (falls back to `--db` flag)
@@ -124,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.4...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.5...develop
+[0.0.5]: https://github.com/codecoradev/trapfall/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/codecoradev/trapfall/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/codecoradev/trapfall/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/codecoradev/trapfall/releases/tag/v0.0.2
