@@ -62,6 +62,39 @@ enum Commands {
     Healthcheck,
     /// Start MCP server (stdio JSON-RPC 2.0)
     Mcp,
+    /// Database management (export, import, verify)
+    Db {
+        #[command(subcommand)]
+        db_command: DbCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DbCommands {
+    /// Export all data from a database to JSONL format
+    Export {
+        /// Source database URL (e.g. sqlite:trapfall.db)
+        #[arg(long)]
+        from: String,
+        /// Output JSONL file path
+        #[arg(long)]
+        to: String,
+    },
+    /// Import JSONL data into a database
+    Import {
+        /// Input JSONL file path
+        #[arg(long)]
+        from: String,
+        /// Target database URL (e.g. postgres://...)
+        #[arg(long)]
+        to: String,
+    },
+    /// Verify database integrity (row counts)
+    Verify {
+        /// Database URL to verify
+        #[arg(long)]
+        url: String,
+    },
 }
 
 #[tokio::main]
@@ -131,6 +164,11 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Mcp => trapfall_mcp::run_server(store).await,
+        Commands::Db { db_command } => match db_command {
+            DbCommands::Export { from, to } => trapfalld::migrate::export_database(&from, &to).await,
+            DbCommands::Import { from, to } => trapfalld::migrate::import_database(&from, &to).await,
+            DbCommands::Verify { url } => trapfalld::migrate::verify_database(&url).await,
+        },
     }
 }
 

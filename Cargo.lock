@@ -2470,6 +2470,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "trapfall_db",
  "trapfall_proto",
  "uuid",
 ]
