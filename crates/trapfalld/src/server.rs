@@ -10,7 +10,6 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -24,7 +23,7 @@ use trapfall_proto::{IngestEvent, IssueStatus, ListResponse};
 /// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: SqlitePool,
+    pub store: Store,
     #[allow(dead_code)]
     pub config: Config,
     pub ingest_tx: mpsc::Sender<IngestEvent>,
@@ -84,7 +83,7 @@ async fn health() -> &'static str {
 }
 
 async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let projects = store.list_projects().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(projects))
 }
@@ -101,7 +100,7 @@ async fn create_project(
     headers: axum::http::HeaderMap,
     Json(req): Json<CreateProjectRequest>,
 ) -> Result<(StatusCode, Json<trapfall_proto::Project>), StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let slug = req.slug.unwrap_or_else(|| req.name.to_lowercase().replace(' ', "-"));
     // Use request Host header for DSN generation
     let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000");
@@ -116,7 +115,7 @@ async fn get_project(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<trapfall_proto::Project>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = store.get_project_by_slug(&slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     match project {
         Some(p) => Ok(Json(p)),
@@ -134,7 +133,7 @@ async fn update_project(
     Path(slug): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> Result<Json<trapfall_proto::Project>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = store
         .get_project_by_slug(&slug)
         .await
@@ -149,7 +148,7 @@ async fn update_project(
 }
 
 async fn delete_project(State(state): State<AppState>, Path(slug): Path<String>) -> StatusCode {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = match store.get_project_by_slug(&slug).await {
         Ok(Some(p)) => p,
         _ => return StatusCode::NOT_FOUND,
@@ -169,7 +168,7 @@ async fn delete_project(State(state): State<AppState>, Path(slug): Path<String>)
 }
 
 async fn archive_project(State(state): State<AppState>, Path(slug): Path<String>) -> StatusCode {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = match store.get_project_by_slug(&slug).await {
         Ok(Some(p)) => p,
         _ => return StatusCode::NOT_FOUND,
@@ -184,7 +183,7 @@ async fn archive_project(State(state): State<AppState>, Path(slug): Path<String>
 }
 
 async fn unarchive_project(State(state): State<AppState>, Path(slug): Path<String>) -> StatusCode {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = match store.get_project_by_slug(&slug).await {
         Ok(Some(p)) => p,
         _ => return StatusCode::NOT_FOUND,
@@ -202,7 +201,7 @@ async fn rotate_dsn(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<trapfall_proto::Project>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = store
         .get_project_by_slug(&slug)
         .await
@@ -230,7 +229,7 @@ async fn ingest_envelope(
     }
 
     // Validate DSN key from Authorization header
-    let store = Store::new(state.pool.clone());
+    let store = state.store.clone();
     // Extract DSN key: try X-Sentry-Auth header first, then Authorization Bearer
     let dsn_key = headers
         .get("x-sentry-auth")
@@ -342,7 +341,7 @@ async fn list_issues(
     Path(slug): Path<String>,
     Query(query): Query<ListIssuesQuery>,
 ) -> Result<Json<ListResponse<trapfall_proto::Issue>>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
 
     // Resolve project slug to ID
     let project = store
@@ -367,7 +366,7 @@ async fn get_issue(
     State(state): State<AppState>,
     Path(issue_id): Path<String>,
 ) -> Result<Json<trapfall_proto::Issue>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     store
         .get_issue(&issue_id)
         .await
@@ -386,7 +385,7 @@ async fn set_issue_status(
     Path(issue_id): Path<String>,
     Json(req): Json<SetStatusRequest>,
 ) -> StatusCode {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     match store.set_issue_status(&issue_id, req.status).await {
         Ok(()) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -406,7 +405,7 @@ async fn list_events(
     Path(issue_id): Path<String>,
     Query(query): Query<ListEventsQuery>,
 ) -> Result<Json<ListResponse<trapfall_proto::StoredEvent>>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let limit = query.per_page.min(100) as i64;
     let offset = ((query.page - 1) * limit as u32) as i64;
 
@@ -422,7 +421,7 @@ async fn list_alert_rules(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<Vec<trapfall_proto::AlertRule>>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = store
         .get_project_by_slug(&slug)
         .await
@@ -438,7 +437,7 @@ async fn create_alert_rule(
     Path(slug): Path<String>,
     Json(req): Json<trapfall_proto::CreateAlertRule>,
 ) -> Result<Json<trapfall_proto::AlertRule>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let project = store
         .get_project_by_slug(&slug)
         .await
@@ -467,7 +466,7 @@ async fn get_alert_rule(
     State(state): State<AppState>,
     Path(rule_id): Path<String>,
 ) -> Result<Json<trapfall_proto::AlertRule>, StatusCode> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     store
         .get_alert_rule(&rule_id)
         .await
@@ -477,7 +476,7 @@ async fn get_alert_rule(
 }
 
 async fn delete_alert_rule(State(state): State<AppState>, Path(rule_id): Path<String>) -> StatusCode {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     match store.delete_alert_rule(&rule_id).await {
         Ok(true) => StatusCode::OK,
         Ok(false) => StatusCode::NOT_FOUND,
@@ -495,7 +494,7 @@ async fn toggle_alert_rule(
     Path(rule_id): Path<String>,
     Json(req): Json<ToggleRequest>,
 ) -> StatusCode {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     match store.toggle_alert_rule(&rule_id, req.enabled).await {
         Ok(()) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -518,7 +517,7 @@ async fn search_issues(
     Path(slug): Path<String>,
     Query(query): Query<SearchQuery>,
 ) -> impl IntoResponse {
-    let store = Store::new(state.pool.clone());
+    let store = state.store.clone();
     let project = match store.get_project_by_slug(&slug).await {
         Ok(Some(p)) => p,
         _ => return StatusCode::NOT_FOUND.into_response(),
@@ -529,7 +528,7 @@ async fn search_issues(
     let offset = page * limit;
 
     let total = trapfall_search::count_search_issues(
-        &state.pool,
+        &state.store,
         &query.q,
         Some(&project.id),
         query.status.as_deref(),
@@ -539,7 +538,7 @@ async fn search_issues(
     .unwrap_or(0);
 
     match trapfall_search::search_issues(
-        &state.pool,
+        &state.store,
         &query.q,
         Some(&project.id),
         query.status.as_deref(),

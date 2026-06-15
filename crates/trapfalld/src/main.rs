@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use tokio::sync::mpsc;
 use tracing::info;
 
+use trapfall_core::Store;
 use trapfalld::{AppState, Config, DigestTask, WsHub, spawn_alert_engine};
 
 #[derive(Parser, Debug)]
@@ -80,13 +81,15 @@ async fn main() -> Result<()> {
     info!("Opening database: {db_url}");
 
     let backend = trapfall_db::open_database(&db_url).await?;
-    let pool = backend.sqlite_pool()?.clone();
-    trapfall_core::run_migrations(&pool).await?;
+    {
+        let pool = backend.sqlite_pool()?;
+        trapfall_db::run_sqlite_migrations(pool).await?;
+    }
+    let store = trapfall_core::Store::new(backend);
 
     match cli.command.unwrap_or(Commands::Serve { listen: "0.0.0.0:9090".into() }) {
-        Commands::Serve { listen } => run_server(pool, listen).await,
+        Commands::Serve { listen } => run_server(store, listen).await,
         Commands::ProjectList => {
-            let store = trapfall_core::Store::new(pool);
             let projects = store.list_projects().await?;
             if projects.is_empty() {
                 println!("No projects found.");
@@ -100,7 +103,6 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::ProjectAdd { name, slug } => {
-            let store = trapfall_core::Store::new(pool);
             let slug = slug.unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
             let project = store.create_project(&slug, &name).await?;
             println!("Project created: {} ({})", project.name, project.slug);
@@ -108,7 +110,6 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::ProjectRotateDsn { slug } => {
-            let store = trapfall_core::Store::new(pool);
             let project =
                 store.get_project_by_slug(&slug).await?.ok_or_else(|| anyhow::anyhow!("project not found"))?;
             let new_key = store.rotate_dsn(&project.id).await?;
@@ -116,29 +117,24 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::ProjectSetWebhook { slug, url } => {
-            let pool_clone = pool.clone();
-            sqlx::query("UPDATE projects SET webhook_url = ? WHERE slug = ?")
-                .bind(&url)
-                .bind(&slug)
-                .execute(&pool_clone)
-                .await?;
+            store.set_project_webhook(&slug, &url).await?;
             println!("Webhook set for {slug}: {url}");
             Ok(())
         }
         Commands::Healthcheck => {
-            let ok: i64 = sqlx::query_scalar("SELECT 1").fetch_one(&pool).await?;
-            if ok == 1 {
+            let ok = store.backend().ping().await?;
+            if ok {
                 println!("Healthy");
                 Ok(())
             } else {
                 std::process::exit(1);
             }
         }
-        Commands::Mcp => trapfall_mcp::run_server(pool).await,
+        Commands::Mcp => trapfall_mcp::run_server(store).await,
     }
 }
 
-async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
+async fn run_server(store: Store, listen: String) -> Result<()> {
     info!("TrapFall daemon starting");
 
     let secure_cookie =
@@ -161,10 +157,10 @@ async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
     let (ws_broadcast_tx, mut ws_broadcast_rx) = mpsc::unbounded_channel::<trapfall_proto::ServerMessage>();
 
     // Alert engine
-    let alert_tx = spawn_alert_engine(pool.clone(), 256);
+    let alert_tx = spawn_alert_engine(store.clone(), 256);
 
     // Digest task
-    let digest = DigestTask::new(pool.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx).with_alert_sender(alert_tx);
+    let digest = DigestTask::new(store.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx).with_alert_sender(alert_tx);
     let digest_handle = tokio::spawn(async move {
         if let Err(e) = digest.run().await {
             tracing::error!("Digest task failed: {e}");
@@ -180,17 +176,14 @@ async fn run_server(pool: sqlx::SqlitePool, listen: String) -> Result<()> {
     });
 
     // Retention task
-    let retention_pool = pool.clone();
-    let retention_handle = tokio::spawn(async move { trapfalld::retention::run_retention(retention_pool, None).await });
+    let retention_handle = {
+        let store_clone = store.clone();
+        tokio::spawn(async move { trapfalld::retention::run_retention(&store_clone, None).await })
+    };
 
     // App state
-    let state = AppState {
-        pool: pool.clone(),
-        config,
-        ingest_tx,
-        rate_limiter: trapfalld::rate_limit::RateLimiter::default(),
-        ws_hub,
-    };
+    let state =
+        AppState { store, config, ingest_tx, rate_limiter: trapfalld::rate_limit::RateLimiter::default(), ws_hub };
 
     // HTTP server
     let listener = tokio::net::TcpListener::bind(&listen).await?;

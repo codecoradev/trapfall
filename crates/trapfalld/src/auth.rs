@@ -13,7 +13,6 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
-use trapfall_core::Store;
 use trapfall_core::auth::{AuthError, UserInfo};
 
 use crate::AppState;
@@ -88,7 +87,7 @@ pub fn protected_routes(state: AppState) -> Router<AppState> {
 
 /// GET /api/setup — Check if setup is needed.
 async fn setup_status(State(state): State<AppState>) -> Json<SetupStatus> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let has = store.has_users().await.unwrap_or(false);
     Json(SetupStatus { needs_setup: !has })
 }
@@ -99,7 +98,7 @@ async fn setup(
     headers: axum::http::HeaderMap,
     Json(req): Json<SetupRequest>,
 ) -> Result<(StatusCode, [(String, String); 1], Json<SetupResponse>), (StatusCode, Json<AuthErrorJson>)> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
 
     // Only allow when no users exist
     if store.has_users().await.unwrap_or(false) {
@@ -146,7 +145,7 @@ async fn login(
     headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<(StatusCode, [(String, String); 1], Json<LoginResponse>), (StatusCode, Json<AuthErrorJson>)> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
 
     // Extract client IP (best-effort)
     let ip = headers
@@ -179,7 +178,7 @@ async fn login(
 async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -> (StatusCode, [(String, String); 1]) {
     // Extract session token from cookie
     if let Some(token) = extract_session_token(&headers) {
-        let store = Store::new(state.pool);
+        let store = state.store.clone();
         let _ = store.delete_session(&token).await;
     }
 
@@ -202,7 +201,7 @@ pub async fn change_password(
     user: AuthenticatedUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<AuthErrorJson>)> {
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
 
     // Verify current password
     let db_user = store
@@ -240,7 +239,7 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request<axum::
         None => return reject("Not authenticated"),
     };
 
-    let store = Store::new(state.pool);
+    let store = state.store.clone();
     let session = match store.get_session(&token).await {
         Ok(Some(s)) => s,
         Ok(None) => return reject("Session expired"),

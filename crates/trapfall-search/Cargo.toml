@@ -7,10 +7,11 @@ description = "Search module — LIKE + trigram substring matching"
 
 [dependencies]
 trapfall_proto = { workspace = true }
-sqlx = { workspace = true, features = ["sqlite"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
+trapfall_core = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+trapfall_core = { workspace = true }
+trapfall_db = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }

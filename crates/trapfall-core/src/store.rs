@@ -1,14 +1,13 @@
 //! Store — thin facade over a [`Database`] backend.
 //!
-//! Phase 1 (#166): all SQL now lives in `trapfall-db` backends. This struct
-//! remains for API compatibility with existing callers (server, digest, mcp).
-//! It delegates every method to the underlying `dyn Database`.
+//! All SQL lives in `trapfall-db` backends. This struct delegates every
+//! method to the underlying `dyn Database`, providing a stable API for
+//! callers (server, digest, mcp).
 
 use std::sync::Arc;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
-use trapfall_db::{Database, SqliteBackend};
+use trapfall_db::Database;
 use trapfall_proto::{Issue, IssueStatus, Level, Project, StoredEvent};
 
 #[derive(Clone)]
@@ -17,27 +16,14 @@ pub struct Store {
 }
 
 impl Store {
-    /// Wrap a concrete SQLite pool into a `Store`.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { db: Arc::new(SqliteBackend::new(pool)) }
-    }
-
     /// Wrap any `Database` backend into a `Store`.
-    pub fn with_backend(db: Arc<dyn Database>) -> Self {
+    pub fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
     }
 
     /// Access the underlying trait object.
     pub fn backend(&self) -> &dyn Database {
         self.db.as_ref()
-    }
-
-    /// Escape hatch for consumers still issuing raw SQLite SQL
-    /// (`trapfall-search`, `trapfall-mcp`, retention, metrics).
-    ///
-    /// Phase 3 will route these through trait methods entirely.
-    pub fn pool(&self) -> &SqlitePool {
-        self.db.sqlite_pool().expect("Store::pool only available for SQLite backends")
     }
 
     // ── Projects ────────────────────────────────────────────────────────
@@ -84,6 +70,10 @@ impl Store {
 
     pub async fn update_project(&self, project_id: &str, name: &str) -> Result<Project> {
         self.db.update_project(project_id, name).await
+    }
+
+    pub async fn set_project_webhook(&self, slug: &str, url: &str) -> Result<()> {
+        self.db.set_project_webhook(slug, url).await
     }
 
     // ── Issues ──────────────────────────────────────────────────────────
@@ -211,9 +201,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_rotate_dsn_updates_dsn_key() {
-        let pool = crate::open_pool("sqlite::memory:").await.unwrap();
-        crate::run_migrations(&pool).await.unwrap();
-        let store = Store::new(pool);
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        {
+            trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        }
+        let store = Store::new(backend);
 
         let project = store.create_project("test", "Test Project").await.unwrap();
         let original_dsn = project.dsn.clone();

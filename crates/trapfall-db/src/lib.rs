@@ -116,6 +116,28 @@ async fn open_sqlite_pool(url: &str) -> Result<sqlx::SqlitePool> {
     Ok(pool)
 }
 
+/// Run all SQLite database migrations (schema setup).
+///
+/// Idempotent — safe to call on every startup.
+#[cfg(feature = "sqlite")]
+pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
+    sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260608000001_drop_api_keys.sql")).execute(pool).await?;
+    // Add archived_at column to projects (idempotent).
+    // SQLite doesn't support IF NOT EXISTS for ALTER TABLE,
+    // so we check if the column exists first via pragma_table_info.
+    let has_archived_at: bool =
+        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name = 'archived_at'")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+    if !has_archived_at {
+        sqlx::query("ALTER TABLE projects ADD COLUMN archived_at TEXT DEFAULT NULL").execute(pool).await?;
+    }
+    Ok(())
+}
+
 /// Generic database abstraction covering all storage operations used by TrapFall.
 ///
 /// Every method maps 1:1 to an existing `Store` method — this is a mechanical
@@ -138,6 +160,7 @@ pub trait Database: Send + Sync {
     async fn unarchive_project(&self, project_id: &str) -> Result<()>;
     async fn delete_project(&self, project_id: &str) -> Result<bool>;
     async fn update_project(&self, project_id: &str, name: &str) -> Result<Project>;
+    async fn set_project_webhook(&self, project_slug: &str, webhook_url: &str) -> Result<()>;
 
     // ── Issues ──────────────────────────────────────────────────────────
 
@@ -256,7 +279,7 @@ pub trait Database: Send + Sync {
     /// data_json, received_at). Used by MCP `get_event`.
     async fn get_event_raw(&self, event_id: &str) -> Result<Option<StoredEvent>>;
 
-    // ── Backend-specific escape hatch ──────────────────────────────────
+    // ── SQL helpers (non-trait) ───────────────────────────────────────
 
     /// Return a backend-specific opaque pool reference for consumers that
     /// still issue raw SQL (search, mcp, retention, metrics).

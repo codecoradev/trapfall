@@ -4,7 +4,6 @@
 //! and commits to the database periodically or when the buffer is full.
 //! After processing, broadcasts ServerMessages via the WebSocket hub.
 
-use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use trapfall_core::Store;
 use trapfall_proto::{IngestEvent, Issue, ServerMessage};
@@ -16,15 +15,15 @@ const FLUSH_THRESHOLD: usize = 50;
 const FLUSH_INTERVAL_MS: u64 = 2000;
 
 pub struct DigestTask {
-    pool: SqlitePool,
+    store: Store,
     rx: mpsc::Receiver<IngestEvent>,
     ws_tx: Option<mpsc::UnboundedSender<ServerMessage>>,
     alert_tx: Option<mpsc::UnboundedSender<Issue>>,
 }
 
 impl DigestTask {
-    pub fn new(pool: SqlitePool, rx: mpsc::Receiver<IngestEvent>) -> Self {
-        Self { pool, rx, ws_tx: None, alert_tx: None }
+    pub fn new(store: Store, rx: mpsc::Receiver<IngestEvent>) -> Self {
+        Self { store, rx, ws_tx: None, alert_tx: None }
     }
 
     /// Attach a channel for WebSocket broadcast notifications.
@@ -40,7 +39,7 @@ impl DigestTask {
     }
 
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let store = Store::new(self.pool.clone());
+        let store = self.store.clone();
         let mut buffer: Vec<IngestEvent> = Vec::with_capacity(FLUSH_THRESHOLD);
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(FLUSH_INTERVAL_MS));
 
