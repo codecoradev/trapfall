@@ -6,17 +6,115 @@
 //! SQL from business logic. Currently only SQLite is implemented; Postgres
 //! will land in Phase 3 (#168).
 //!
+//! ## Connection factory
+//!
+//! Use [`open_database`] to create a backend from a connection URL:
+//!
+//! ```text
+//! sqlite:./trapfall.db       → SqliteBackend
+//! postgres://user@host/db    → PostgresBackend (requires `postgres` feature)
+//! ```
+//!
 //! See epic #171 for the full multi-backend roadmap.
 
 pub mod error;
+
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 pub use error::DbError;
+
+#[cfg(feature = "sqlite")]
 pub use sqlite::SqliteBackend;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 use trapfall_proto::{AlertRule, Issue, IssueStatus, Level, Project, StoredEvent};
+
+// ── Connection factory ────────────────────────────────────────────────
+
+/// Open a database connection from a URL scheme.
+///
+/// Detects the URL scheme and instantiates the appropriate backend:
+///
+/// | Scheme | Backend | Feature flag |
+/// |--------|---------|--------------|
+/// | `sqlite:` | [`SqliteBackend`] | `sqlite` (default) |
+/// | `postgres:` / `postgresql:` | `PostgresBackend` | `postgres` (optional) |
+///
+/// # Errors
+///
+/// - `DbError::Backend` if the scheme is not recognised.
+/// - `DbError::Backend` if `postgres:` is used but the `postgres` Cargo
+///   feature is not enabled.
+pub async fn open_database(url: &str) -> Result<Arc<dyn Database>> {
+    let lower = url.to_ascii_lowercase();
+
+    if lower.starts_with("sqlite:") {
+        #[cfg(feature = "sqlite")]
+        {
+            let pool = open_sqlite_pool(url).await?;
+            return Ok(Arc::new(SqliteBackend::new(pool)));
+        }
+        #[cfg(not(feature = "sqlite"))]
+        {
+            return Err(DbError::Backend("sqlite: URL given but `sqlite` feature is not enabled".into()).into());
+        }
+    }
+
+    if lower.starts_with("postgres:") || lower.starts_with("postgresql:") {
+        #[cfg(feature = "postgres")]
+        {
+            return Err(DbError::Backend("postgres backend is not yet implemented (Phase 3, issue #168)".into()).into());
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            return Err(DbError::Backend(
+                "postgres: URL given but `postgres` Cargo feature is not enabled. \
+                 Build with `--features postgres` to enable."
+                    .into(),
+            )
+            .into());
+        }
+    }
+
+    Err(DbError::Backend(format!(
+        "unrecognised database URL scheme: {url:?} \
+         (expected `sqlite:` or `postgres:`)"
+    ))
+    .into())
+}
+
+/// Resolve a database URL into a connection string suitable for
+/// [`open_database`].
+///
+/// Accepts both bare paths (`./trapfall.db`) and scheme-prefixed URLs
+/// (`sqlite:./trapfall.db`). Bare paths default to SQLite.
+pub fn normalise_url(url: &str) -> String {
+    if url.contains(':') && !url.starts_with('.') && !url.starts_with('/') {
+        url.to_string()
+    } else {
+        format!("sqlite:{url}")
+    }
+}
+
+// ── SQLite pool helper ────────────────────────────────────────────────
+
+/// Open a SQLite connection pool with WAL mode (mirrors `trapfall_core::open_pool`).
+#[cfg(feature = "sqlite")]
+async fn open_sqlite_pool(url: &str) -> Result<sqlx::SqlitePool> {
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+    use std::str::FromStr;
+
+    let options = SqliteConnectOptions::from_str(url)?
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .create_if_missing(true);
+
+    let pool = SqlitePoolOptions::new().max_connections(4).connect_with(options).await?;
+    Ok(pool)
+}
 
 /// Generic database abstraction covering all storage operations used by TrapFall.
 ///

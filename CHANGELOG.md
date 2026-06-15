@@ -5,6 +5,18 @@ All notable changes to TrapFall are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Database connection factory** (#167): `open_database(url)` detects URL scheme
+  (`sqlite:` or `postgres:`) and instantiates the correct backend
+  - `TRAPFALL_DATABASE_URL` env var support (falls back to `--db` flag)
+  - Cargo feature flags: `default = ["sqlite"]`, optional `postgres`
+  - `normalise_url()` helper: bare paths auto-prefixed with `sqlite:`
+  - Docker: `DATABASE_URL` / `TRAPFALL_DATABASE_URL` env var support
+  - Graceful error if `postgres:` URL used without `postgres` feature
+
 ## [0.0.4] - 2026-06-12
 
 ### Added
@@ -112,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.3...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.4...develop
+[0.0.4]: https://github.com/codecoradev/trapfall/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/codecoradev/trapfall/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/codecoradev/trapfall/releases/tag/v0.0.2

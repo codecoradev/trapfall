@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 trapfall_proto = { workspace = true }
 trapfall_core = { workspace = true }
+trapfall_db = { workspace = true }
 trapfall_ingest = { workspace = true }
 trapfall_search = { workspace = true }
 trapfall_alert = { workspace = true }
@@ -22,7 +23,7 @@ tokio = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }

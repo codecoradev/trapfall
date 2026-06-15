@@ -10,7 +10,7 @@ trapfall_proto = { workspace = true }
 trapfall_db = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
 blake3 = { workspace = true }
 argon2 = { workspace = true }
 thiserror = { workspace = true }

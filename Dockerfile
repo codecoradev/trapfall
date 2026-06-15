@@ -15,6 +15,7 @@ WORKDIR /app
 # Cache dependencies — copy only Cargo files first
 COPY Cargo.toml Cargo.lock ./
 COPY crates/trapfall-proto/Cargo.toml crates/trapfall-proto/Cargo.toml
+COPY crates/trapfall-db/Cargo.toml crates/trapfall-db/Cargo.toml
 COPY crates/trapfall-core/Cargo.toml crates/trapfall-core/Cargo.toml
 COPY crates/trapfall-ingest/Cargo.toml crates/trapfall-ingest/Cargo.toml
 COPY crates/trapfall-search/Cargo.toml crates/trapfall-search/Cargo.toml
@@ -25,6 +26,7 @@ COPY crates/trapfalld/Cargo.toml crates/trapfalld/Cargo.toml
 
 # Create dummy source files for dependency caching
 RUN mkdir -p crates/trapfall-proto/src && echo "" > crates/trapfall-proto/src/lib.rs && \
+    mkdir -p crates/trapfall-db/src && echo "" > crates/trapfall-db/src/lib.rs && \
     mkdir -p crates/trapfall-core/src && echo "" > crates/trapfall-core/src/lib.rs && \
     mkdir -p crates/trapfall-ingest/src && echo "" > crates/trapfall-ingest/src/lib.rs && \
     mkdir -p crates/trapfall-search/src && echo "" > crates/trapfall-search/src/lib.rs && \
