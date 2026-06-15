@@ -1,12 +1,15 @@
-//! SQLite backend — implements [`Database`] using `sqlx::SqlitePool`.
+//! Postgres backend — implements [`Database`] using `sqlx::PgPool`.
 //!
-//! All SQLite-specific SQL lives here. Phase 1 is a mechanical extraction
-//! of the queries previously scattered across `store.rs`, `auth.rs`, and
-//! `search.rs`. Zero behavior change.
+//! Mirrors `SqliteBackend` logic with Postgres dialect adjustments:
+//! numbered params (`$1`), `ILIKE`, `BOOLEAN`, `ON CONFLICT` upsert.
+//!
+//! All shared row types and helpers live in [`crate::common`].
+
+#![cfg_attr(not(feature = "postgres"), allow(unused))]
 
 use anyhow::Result;
 use async_trait::async_trait;
-use sqlx::{Row, SqlitePool};
+use sqlx::postgres::PgPool;
 use trapfall_proto::{AlertRule, Issue, IssueStatus, Level, Project, StoredEvent};
 
 use crate::common::*;
@@ -14,18 +17,18 @@ use crate::{Database, StoredSession, StoredUser};
 
 // ── Backend handle ─────────────────────────────────────────────────────
 
-/// SQLite backend wrapping a connection pool.
+/// Postgres backend wrapping a connection pool.
 #[derive(Clone)]
-pub struct SqliteBackend {
-    pool: SqlitePool,
+pub struct PostgresBackend {
+    pool: PgPool,
 }
 
-impl SqliteBackend {
-    pub fn new(pool: SqlitePool) -> Self {
+impl PostgresBackend {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 }
@@ -33,9 +36,9 @@ impl SqliteBackend {
 // ── Trait impl ─────────────────────────────────────────────────────────
 
 #[async_trait]
-impl Database for SqliteBackend {
-    fn sqlite_pool(&self) -> Result<&SqlitePool> {
-        Ok(&self.pool)
+impl Database for PostgresBackend {
+    fn sqlite_pool(&self) -> Result<&sqlx::SqlitePool> {
+        Err(anyhow::anyhow!("PostgresBackend does not expose a SqlitePool"))
     }
 
     // ── Projects ───────────────────────────────────────────────────────
@@ -48,8 +51,8 @@ impl Database for SqliteBackend {
         let id = new_id();
         let dsn = generate_dsn_with(host, &id);
         let dsn_key = extract_dsn_key(&dsn);
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        let now = now_rfc3339();
+        sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES ($1, $2, $3, $4, $5, $6)")
             .bind(&id)
             .bind(slug)
             .bind(name)
@@ -64,7 +67,7 @@ impl Database for SqliteBackend {
 
     async fn get_project_by_slug(&self, slug: &str) -> Result<Option<Project>> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE slug = ?",
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE slug = $1",
         )
         .bind(slug)
         .fetch_optional(&self.pool)
@@ -75,7 +78,7 @@ impl Database for SqliteBackend {
 
     async fn get_project_by_id(&self, id: &str) -> Result<Option<Project>> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE id = ?",
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -86,7 +89,7 @@ impl Database for SqliteBackend {
 
     async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE dsn_key = ?",
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE dsn_key = $1",
         )
         .bind(sentry_key)
         .fetch_optional(&self.pool)
@@ -106,15 +109,10 @@ impl Database for SqliteBackend {
 
     async fn rotate_dsn(&self, project_id: &str) -> Result<String> {
         let project = self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found"))?;
-        let host = project
-            .dsn
-            .split('@')
-            .nth(1)
-            .map(|s| s.split('/').next().unwrap_or("localhost:3000"))
-            .unwrap_or("localhost:3000");
-        let new_dsn = generate_dsn_with(host, project_id);
+        let host = extract_dsn_host(&project.dsn);
+        let new_dsn = generate_dsn_with(&host, project_id);
         let new_dsn_key = extract_dsn_key(&new_dsn);
-        sqlx::query("UPDATE projects SET dsn = ?, dsn_key = ? WHERE id = ?")
+        sqlx::query("UPDATE projects SET dsn = $1, dsn_key = $2 WHERE id = $3")
             .bind(&new_dsn)
             .bind(&new_dsn_key)
             .bind(project_id)
@@ -124,8 +122,8 @@ impl Database for SqliteBackend {
     }
 
     async fn archive_project(&self, project_id: &str) -> Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("UPDATE projects SET archived_at = ? WHERE id = ?")
+        let now = now_rfc3339();
+        sqlx::query("UPDATE projects SET archived_at = $1 WHERE id = $2")
             .bind(&now)
             .bind(project_id)
             .execute(&self.pool)
@@ -134,21 +132,24 @@ impl Database for SqliteBackend {
     }
 
     async fn unarchive_project(&self, project_id: &str) -> Result<()> {
-        sqlx::query("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("UPDATE projects SET archived_at = NULL WHERE id = $1")
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     async fn delete_project(&self, project_id: &str) -> Result<bool> {
-        sqlx::query("DELETE FROM events WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM issues WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_history WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_rules WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        let result = sqlx::query("DELETE FROM projects WHERE id = ?").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM events WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM issues WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM alert_history WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM alert_rules WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        let result = sqlx::query("DELETE FROM projects WHERE id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
     }
 
     async fn update_project(&self, project_id: &str, name: &str) -> Result<Project> {
-        sqlx::query("UPDATE projects SET name = ? WHERE id = ?")
+        sqlx::query("UPDATE projects SET name = $1 WHERE id = $2")
             .bind(name)
             .bind(project_id)
             .execute(&self.pool)
@@ -157,7 +158,7 @@ impl Database for SqliteBackend {
     }
 
     async fn set_project_webhook(&self, project_slug: &str, webhook_url: &str) -> Result<()> {
-        sqlx::query("UPDATE projects SET webhook_url = ? WHERE slug = ?")
+        sqlx::query("UPDATE projects SET webhook_url = $1 WHERE slug = $2")
             .bind(webhook_url)
             .bind(project_slug)
             .execute(&self.pool)
@@ -176,75 +177,33 @@ impl Database for SqliteBackend {
         level: Level,
     ) -> Result<Issue> {
         let level_str = level_to_str(level);
+        let id = new_id();
+        let now = now_rfc3339();
 
-        let existing = sqlx::query_as::<_, IssueRow>(
-            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE project_id = ? AND fingerprint = ?",
+        // INSERT ... ON CONFLICT DO UPDATE — returns the row in both cases.
+        let row = sqlx::query_as::<_, IssueRow>(
+            "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) \
+             VALUES ($1, $2, $3, $4, $5, 'unresolved', $6, 1, 0, $7, $7) \
+             ON CONFLICT (project_id, fingerprint) DO UPDATE SET \
+                 count = issues.count + 1, last_seen = $7, level = $6 \
+             RETURNING id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen",
         )
+        .bind(&id)
         .bind(project_id)
         .bind(fingerprint)
-        .fetch_optional(&self.pool)
+        .bind(title)
+        .bind(culprit)
+        .bind(&level_str)
+        .bind(&now)
+        .fetch_one(&self.pool)
         .await?;
 
-        if let Some(row) = existing {
-            let new_count = row.count + 1;
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE issues SET count = ?, last_seen = ?, level = ? WHERE id = ?")
-                .bind(new_count)
-                .bind(&now)
-                .bind(&level_str)
-                .bind(&row.id)
-                .execute(&self.pool)
-                .await?;
-
-            Ok(Issue {
-                id: row.id,
-                project_id: row.project_id,
-                fingerprint: row.fingerprint,
-                title: row.title,
-                culprit: row.culprit,
-                status: str_to_status(&row.status),
-                level,
-                count: new_count,
-                user_count: row.user_count,
-                first_seen: row.first_seen,
-                last_seen: now,
-            })
-        } else {
-            let id = new_id();
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query(
-                "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, 'unresolved', ?, 1, 0, ?, ?)",
-            )
-            .bind(&id)
-            .bind(project_id)
-            .bind(fingerprint)
-            .bind(title)
-            .bind(culprit)
-            .bind(&level_str)
-            .bind(&now)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
-
-            Ok(Issue {
-                id,
-                project_id: project_id.to_string(),
-                fingerprint: fingerprint.to_string(),
-                title: title.to_string(),
-                culprit: culprit.map(|s| s.to_string()),
-                status: IssueStatus::Unresolved,
-                level,
-                count: 1,
-                user_count: 0,
-                first_seen: now.clone(),
-                last_seen: now,
-            })
-        }
+        Ok(row.into())
     }
 
     async fn get_issue(&self, issue_id: &str) -> Result<Option<Issue>> {
         let row = sqlx::query_as::<_, IssueRow>(
-            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE id = ?",
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE id = $1",
         )
         .bind(issue_id)
         .fetch_optional(&self.pool)
@@ -255,7 +214,8 @@ impl Database for SqliteBackend {
 
     async fn list_issues(&self, project_id: &str, limit: i64, offset: i64) -> Result<Vec<Issue>> {
         let rows = sqlx::query_as::<_, IssueRow>(
-            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE project_id = ? ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen \
+             FROM issues WHERE project_id = $1 ORDER BY last_seen DESC LIMIT $2 OFFSET $3",
         )
         .bind(project_id)
         .bind(limit)
@@ -275,15 +235,18 @@ impl Database for SqliteBackend {
     ) -> Result<Vec<Issue>> {
         let mut sql = String::from(
             "SELECT id, project_id, fingerprint, title, culprit, status, level, \
-             count, user_count, first_seen, last_seen FROM issues WHERE project_id = ?",
+             count, user_count, first_seen, last_seen FROM issues WHERE project_id = $1",
         );
+        let mut idx = 2usize;
         if status.is_some() {
-            sql.push_str(" AND status = ?");
+            sql.push_str(&format!(" AND status = ${idx}"));
+            idx += 1;
         }
         if level.is_some() {
-            sql.push_str(" AND level = ?");
+            sql.push_str(&format!(" AND level = ${idx}"));
+            idx += 1;
         }
-        sql.push_str(" ORDER BY last_seen DESC LIMIT ? OFFSET ?");
+        sql.push_str(&format!(" ORDER BY last_seen DESC LIMIT ${idx} OFFSET ${}", idx + 1));
 
         let mut q = sqlx::query_as::<_, IssueRow>(&sql).bind(project_id);
         if let Some(s) = status {
@@ -299,12 +262,14 @@ impl Database for SqliteBackend {
     }
 
     async fn count_issues(&self, project_id: &str, status: Option<&str>, level: Option<&str>) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM issues WHERE project_id = ?");
+        let mut sql = String::from("SELECT COUNT(*) FROM issues WHERE project_id = $1");
+        let mut idx = 2usize;
         if status.is_some() {
-            sql.push_str(" AND status = ?");
+            sql.push_str(&format!(" AND status = ${idx}"));
+            idx += 1;
         }
         if level.is_some() {
-            sql.push_str(" AND level = ?");
+            sql.push_str(&format!(" AND level = ${idx}"));
         }
 
         let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(project_id);
@@ -320,7 +285,7 @@ impl Database for SqliteBackend {
 
     async fn set_issue_status(&self, issue_id: &str, status: IssueStatus) -> Result<()> {
         let status_str = status_to_str(status);
-        sqlx::query("UPDATE issues SET status = ? WHERE id = ?")
+        sqlx::query("UPDATE issues SET status = $1 WHERE id = $2")
             .bind(&status_str)
             .bind(issue_id)
             .execute(&self.pool)
@@ -332,8 +297,8 @@ impl Database for SqliteBackend {
 
     async fn insert_event(&self, issue_id: &str, project_id: &str, event_data: &str) -> Result<String> {
         let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES (?, ?, ?, ?, ?)")
+        let now = now_rfc3339();
+        sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES ($1, $2, $3, $4, $5)")
             .bind(&id)
             .bind(issue_id)
             .bind(project_id)
@@ -346,7 +311,8 @@ impl Database for SqliteBackend {
 
     async fn list_events(&self, issue_id: &str, limit: i64, offset: i64) -> Result<Vec<StoredEvent>> {
         let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT id, issue_id, project_id, data, received_at FROM events WHERE issue_id = ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
+            "SELECT id, issue_id, project_id, data, received_at FROM events \
+             WHERE issue_id = $1 ORDER BY received_at DESC LIMIT $2 OFFSET $3",
         )
         .bind(issue_id)
         .bind(limit)
@@ -357,7 +323,7 @@ impl Database for SqliteBackend {
     }
 
     async fn count_events(&self, issue_id: &str) -> Result<i64> {
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE issue_id = ?")
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE issue_id = $1")
             .bind(issue_id)
             .fetch_one(&self.pool)
             .await?;
@@ -376,9 +342,10 @@ impl Database for SqliteBackend {
         cooldown_seconds: i64,
     ) -> Result<AlertRule> {
         let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = now_rfc3339();
         sqlx::query(
-            "INSERT INTO alert_rules (id, project_id, name, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO alert_rules (id, project_id, name, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)",
         )
         .bind(&id)
         .bind(project_id)
@@ -387,7 +354,6 @@ impl Database for SqliteBackend {
         .bind(action_type)
         .bind(action_config)
         .bind(cooldown_seconds)
-        .bind(&now)
         .bind(&now)
         .execute(&self.pool)
         .await?;
@@ -408,7 +374,8 @@ impl Database for SqliteBackend {
 
     async fn list_alert_rules(&self, project_id: &str) -> Result<Vec<AlertRule>> {
         let rows = sqlx::query_as::<_, AlertRuleRow>(
-            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE project_id = ? ORDER BY created_at",
+            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at \
+             FROM alert_rules WHERE project_id = $1 ORDER BY created_at",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -418,7 +385,8 @@ impl Database for SqliteBackend {
 
     async fn get_alert_rule(&self, rule_id: &str) -> Result<Option<AlertRule>> {
         let row = sqlx::query_as::<_, AlertRuleRow>(
-            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE id = ?",
+            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at \
+             FROM alert_rules WHERE id = $1",
         )
         .bind(rule_id)
         .fetch_optional(&self.pool)
@@ -427,13 +395,13 @@ impl Database for SqliteBackend {
     }
 
     async fn delete_alert_rule(&self, rule_id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM alert_rules WHERE id = ?").bind(rule_id).execute(&self.pool).await?;
+        let result = sqlx::query("DELETE FROM alert_rules WHERE id = $1").bind(rule_id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
     }
 
     async fn toggle_alert_rule(&self, rule_id: &str, enabled: bool) -> Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("UPDATE alert_rules SET enabled = ?, updated_at = ? WHERE id = ?")
+        let now = now_rfc3339();
+        sqlx::query("UPDATE alert_rules SET enabled = $1, updated_at = $2 WHERE id = $3")
             .bind(enabled)
             .bind(&now)
             .bind(rule_id)
@@ -444,7 +412,8 @@ impl Database for SqliteBackend {
 
     async fn get_enabled_rules_for_project(&self, project_id: &str) -> Result<Vec<AlertRule>> {
         let rows = sqlx::query_as::<_, AlertRuleRow>(
-            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at FROM alert_rules WHERE project_id = ? AND enabled = 1",
+            "SELECT id, project_id, name, enabled, conditions, action_type, action_config, cooldown_seconds, created_at, updated_at \
+             FROM alert_rules WHERE project_id = $1 AND enabled = TRUE",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -456,9 +425,10 @@ impl Database for SqliteBackend {
 
     async fn insert_alert_history(&self, rule_id: &str, project_id: &str, issue_id: &str) -> Result<String> {
         let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = now_rfc3339();
         sqlx::query(
-            "INSERT INTO alert_history (id, rule_id, project_id, issue_id, status, attempts, created_at) VALUES (?, ?, ?, ?, 'pending', 0, ?)",
+            "INSERT INTO alert_history (id, rule_id, project_id, issue_id, status, attempts, created_at) \
+             VALUES ($1, $2, $3, $4, 'pending', 0, $5)",
         )
         .bind(&id)
         .bind(rule_id)
@@ -471,8 +441,8 @@ impl Database for SqliteBackend {
     }
 
     async fn mark_alert_sent(&self, history_id: &str) -> Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("UPDATE alert_history SET status = 'sent', sent_at = ?, attempts = attempts + 1 WHERE id = ?")
+        let now = now_rfc3339();
+        sqlx::query("UPDATE alert_history SET status = 'sent', sent_at = $1, attempts = attempts + 1 WHERE id = $2")
             .bind(&now)
             .bind(history_id)
             .execute(&self.pool)
@@ -481,11 +451,13 @@ impl Database for SqliteBackend {
     }
 
     async fn mark_alert_failed(&self, history_id: &str, error: &str) -> Result<()> {
-        sqlx::query("UPDATE alert_history SET status = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?")
-            .bind(error)
-            .bind(history_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE alert_history SET status = 'failed', last_error = $1, attempts = attempts + 1 WHERE id = $2",
+        )
+        .bind(error)
+        .bind(history_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -500,69 +472,47 @@ impl Database for SqliteBackend {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Issue>> {
-        let pattern = format!("%{}%", escape_like_sqlite(query));
+        let pattern = format!("%{}%", escape_ilike_postgres(query));
 
-        let sql_base = "SELECT id, project_id, fingerprint, title, culprit, status, level, \
-             count, user_count, first_seen, last_seen FROM issues WHERE (title LIKE ? ESCAPE '!' OR culprit LIKE ? ESCAPE '!')";
-
-        let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
+        let mut sql = String::from(
+            "SELECT id, project_id, fingerprint, title, culprit, status, level, \
+             count, user_count, first_seen, last_seen FROM issues \
+             WHERE (title ILIKE $1 ESCAPE '\\' OR culprit ILIKE $1 ESCAPE '\\')",
+        );
+        let mut idx = 2usize;
         let mut conds: Vec<String> = Vec::new();
+        if project_id.is_some() {
+            conds.push(format!("project_id = ${idx}"));
+            idx += 1;
+        }
+        if status.is_some() {
+            conds.push(format!("status = ${idx}"));
+            idx += 1;
+        }
+        if level.is_some() {
+            conds.push(format!("level = ${idx}"));
+            idx += 1;
+        }
+        if !conds.is_empty() {
+            sql.push_str(" AND ");
+            sql.push_str(&conds.join(" AND "));
+        }
+        sql.push_str(&format!(" ORDER BY last_seen DESC LIMIT ${idx} OFFSET ${}", idx + 1));
 
+        let mut q = sqlx::query_as::<_, IssueRow>(&sql).bind(&pattern);
         if let Some(pid) = project_id {
-            conds.push("project_id = ?".into());
-            bindings.push(pid.to_string());
+            q = q.bind(pid);
         }
         if let Some(s) = status {
-            conds.push("status = ?".into());
-            bindings.push(s.to_string());
+            q = q.bind(s);
         }
         if let Some(l) = level {
-            conds.push("level = ?".into());
-            bindings.push(l.to_string());
-        }
-
-        let where_ext = if conds.is_empty() { String::new() } else { format!(" AND {}", conds.join(" AND ")) };
-        let full_sql = format!("{sql_base}{where_ext} ORDER BY last_seen DESC LIMIT ? OFFSET ?");
-
-        let mut q = sqlx::query(&full_sql);
-        for b in &bindings {
-            q = q.bind(b);
+            q = q.bind(l);
         }
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await?;
-
-        let mut issues = Vec::new();
-        for row in rows {
-            let id: String = row.try_get("id")?;
-            let pid: String = row.try_get("project_id")?;
-            let fingerprint: String = row.try_get("fingerprint")?;
-            let title: String = row.try_get("title")?;
-            let culprit: Option<String> = row.try_get("culprit")?;
-            let status_str: String = row.try_get("status")?;
-            let level_str: String = row.try_get("level")?;
-            let count: i64 = row.try_get("count")?;
-            let user_count: i64 = row.try_get("user_count")?;
-            let first_seen: String = row.try_get("first_seen")?;
-            let last_seen: String = row.try_get("last_seen")?;
-
-            issues.push(Issue {
-                id,
-                project_id: pid,
-                fingerprint,
-                title,
-                culprit,
-                status: serde_json::from_value(serde_json::Value::String(status_str))
-                    .unwrap_or(IssueStatus::Unresolved),
-                level: serde_json::from_value(serde_json::Value::String(level_str)).unwrap_or(Level::Error),
-                count,
-                user_count,
-                first_seen,
-                last_seen,
-            });
-        }
-
-        Ok(issues)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn count_search_issues(
@@ -572,32 +522,38 @@ impl Database for SqliteBackend {
         status: Option<&str>,
         level: Option<&str>,
     ) -> Result<i64> {
-        let pattern = format!("%{}%", escape_like_sqlite(query));
+        let pattern = format!("%{}%", escape_ilike_postgres(query));
 
-        let sql_base = "SELECT COUNT(*) FROM issues WHERE (title LIKE ? ESCAPE '!' OR culprit LIKE ? ESCAPE '!')";
-
-        let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
+        let mut sql = String::from(
+            "SELECT COUNT(*) FROM issues WHERE (title ILIKE $1 ESCAPE '\\' OR culprit ILIKE $1 ESCAPE '\\')",
+        );
+        let mut idx = 2usize;
         let mut conds: Vec<String> = Vec::new();
+        if project_id.is_some() {
+            conds.push(format!("project_id = ${idx}"));
+            idx += 1;
+        }
+        if status.is_some() {
+            conds.push(format!("status = ${idx}"));
+            idx += 1;
+        }
+        if level.is_some() {
+            conds.push(format!("level = ${idx}"));
+        }
+        if !conds.is_empty() {
+            sql.push_str(" AND ");
+            sql.push_str(&conds.join(" AND "));
+        }
 
+        let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(&pattern);
         if let Some(pid) = project_id {
-            conds.push("project_id = ?".into());
-            bindings.push(pid.to_string());
+            q = q.bind(pid);
         }
         if let Some(s) = status {
-            conds.push("status = ?".into());
-            bindings.push(s.to_string());
+            q = q.bind(s);
         }
         if let Some(l) = level {
-            conds.push("level = ?".into());
-            bindings.push(l.to_string());
-        }
-
-        let where_ext = if conds.is_empty() { String::new() } else { format!(" AND {}", conds.join(" AND ")) };
-        let full_sql = format!("{sql_base}{where_ext}");
-
-        let mut q = sqlx::query_scalar::<_, i64>(&full_sql);
-        for b in &bindings {
-            q = q.bind(b);
+            q = q.bind(l);
         }
 
         let count = q.fetch_one(&self.pool).await?;
@@ -619,10 +575,8 @@ impl Database for SqliteBackend {
     // ── Retention ──────────────────────────────────────────────────────
 
     async fn purge_old_events(&self, days: i64) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM events WHERE received_at < datetime('now', ?)")
-            .bind(format!("-{days} days"))
-            .execute(&self.pool)
-            .await?;
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let result = sqlx::query("DELETE FROM events WHERE received_at < $1").bind(&cutoff).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
@@ -634,9 +588,8 @@ impl Database for SqliteBackend {
     }
 
     async fn purge_stale_auth_attempts(&self) -> Result<()> {
-        sqlx::query("DELETE FROM auth_attempts WHERE created_at < datetime('now', '-30 days')")
-            .execute(&self.pool)
-            .await?;
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        sqlx::query("DELETE FROM auth_attempts WHERE created_at < $1").bind(&cutoff).execute(&self.pool).await?;
         Ok(())
     }
 
@@ -644,7 +597,7 @@ impl Database for SqliteBackend {
 
     async fn is_rule_cooling_down(&self, rule_id: &str, cooldown_seconds: i64) -> Result<bool> {
         let row: Option<(String,)> = sqlx::query_as(
-            "SELECT created_at FROM alert_history WHERE rule_id = ? AND status = 'sent' ORDER BY created_at DESC LIMIT 1",
+            "SELECT created_at FROM alert_history WHERE rule_id = $1 AND status = 'sent' ORDER BY created_at DESC LIMIT 1",
         )
         .bind(rule_id)
         .fetch_optional(&self.pool)
@@ -664,7 +617,7 @@ impl Database for SqliteBackend {
     // ── Health ─────────────────────────────────────────────────────────
 
     async fn ping(&self) -> Result<bool> {
-        let ok: i64 = sqlx::query_scalar("SELECT 1").fetch_one(&self.pool).await?;
+        let ok: i16 = sqlx::query_scalar("SELECT 1").fetch_one(&self.pool).await?;
         Ok(ok == 1)
     }
 
@@ -677,9 +630,9 @@ impl Database for SqliteBackend {
 
     async fn create_user(&self, email: &str, name: &str, password_hash: &str) -> Result<()> {
         let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = now_rfc3339();
         sqlx::query(
-            "INSERT INTO users (id, email, name, password_hash, role, created_at) VALUES (?, ?, ?, ?, 'admin', ?)",
+            "INSERT INTO users (id, email, name, password_hash, role, created_at) VALUES ($1, $2, $3, $4, 'admin', $5)",
         )
         .bind(&id)
         .bind(email)
@@ -693,7 +646,7 @@ impl Database for SqliteBackend {
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<StoredUser>> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, email, name, password_hash, role, created_at FROM users WHERE email = ?",
+            "SELECT id, email, name, password_hash, role, created_at FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -703,7 +656,7 @@ impl Database for SqliteBackend {
 
     async fn get_user_by_id(&self, id: &str) -> Result<Option<StoredUser>> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, email, name, password_hash, role, created_at FROM users WHERE id = ?",
+            "SELECT id, email, name, password_hash, role, created_at FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -712,7 +665,7 @@ impl Database for SqliteBackend {
     }
 
     async fn update_password(&self, user_id: &str, password_hash: &str) -> Result<()> {
-        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
             .bind(password_hash)
             .bind(user_id)
             .execute(&self.pool)
@@ -722,8 +675,8 @@ impl Database for SqliteBackend {
 
     async fn create_session(&self, user_id: &str, token: &str, expires_at: &str) -> Result<()> {
         let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
+        let now = now_rfc3339();
+        sqlx::query("INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)")
             .bind(&id)
             .bind(user_id)
             .bind(token)
@@ -736,7 +689,7 @@ impl Database for SqliteBackend {
 
     async fn get_session(&self, token: &str) -> Result<Option<StoredSession>> {
         let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, user_id, token, expires_at, created_at FROM sessions WHERE token = ?",
+            "SELECT id, user_id, token, expires_at, created_at FROM sessions WHERE token = $1",
         )
         .bind(token)
         .fetch_optional(&self.pool)
@@ -745,20 +698,20 @@ impl Database for SqliteBackend {
     }
 
     async fn delete_session(&self, token: &str) -> Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE token = ?").bind(token).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM sessions WHERE token = $1").bind(token).execute(&self.pool).await?;
         Ok(())
     }
 
     async fn cleanup_expired_sessions(&self) -> Result<u64> {
-        let now = chrono::Utc::now().to_rfc3339();
-        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?").bind(&now).execute(&self.pool).await?;
+        let now = now_rfc3339();
+        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < $1").bind(&now).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     async fn record_auth_attempt(&self, email: &str, ip: &str, success: bool) -> Result<()> {
         let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO auth_attempts (id, email, ip, success, created_at) VALUES (?, ?, ?, ?, ?)")
+        let now = now_rfc3339();
+        sqlx::query("INSERT INTO auth_attempts (id, email, ip, success, created_at) VALUES ($1, $2, $3, $4, $5)")
             .bind(&id)
             .bind(email)
             .bind(ip)
@@ -771,19 +724,20 @@ impl Database for SqliteBackend {
 
     async fn count_failed_attempts_email(&self, email: &str, minutes: i64) -> Result<i64> {
         let cutoff = (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339();
-        let row: Option<(i64,)> =
-            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE email = ? AND success = 0 AND created_at > ?")
-                .bind(email)
-                .bind(&cutoff)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*) FROM auth_attempts WHERE email = $1 AND success = FALSE AND created_at > $2",
+        )
+        .bind(email)
+        .bind(&cutoff)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(|(c,)| c).unwrap_or(0))
     }
 
     async fn count_failed_attempts_ip(&self, ip: &str, minutes: i64) -> Result<i64> {
         let cutoff = (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339();
         let row: Option<(i64,)> =
-            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE ip = ? AND success = 0 AND created_at > ?")
+            sqlx::query_as("SELECT COUNT(*) FROM auth_attempts WHERE ip = $1 AND success = FALSE AND created_at > $2")
                 .bind(ip)
                 .bind(&cutoff)
                 .fetch_optional(&self.pool)
@@ -795,87 +749,11 @@ impl Database for SqliteBackend {
 
     async fn get_event_raw(&self, event_id: &str) -> Result<Option<StoredEvent>> {
         let row = sqlx::query_as::<_, EventRow>(
-            "SELECT id, issue_id, project_id, data, received_at FROM events WHERE id = ?",
+            "SELECT id, issue_id, project_id, data, received_at FROM events WHERE id = $1",
         )
         .bind(event_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(Into::into))
-    }
-}
-
-// ── Tests ──────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    async fn open_backend() -> SqliteBackend {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(4).connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../trapfalld/migrations/20260606000002_alert_rules.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../trapfalld/migrations/20260612000001_project_archive.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        SqliteBackend::new(pool)
-    }
-
-    #[tokio::test]
-    async fn test_create_and_lookup_project() {
-        let db = open_backend().await;
-        let project = db.create_project("app", "App").await.unwrap();
-        assert_eq!(project.slug, "app");
-
-        let found = db.get_project_by_slug("app").await.unwrap();
-        assert!(found.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_upsert_issue_increments_count() {
-        let db = open_backend().await;
-        db.create_project("app", "App").await.unwrap();
-        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
-
-        let issue = db.upsert_issue(&project.id, "fp1", "Boom", None, Level::Error).await.unwrap();
-        assert_eq!(issue.count, 1);
-
-        let issue2 = db.upsert_issue(&project.id, "fp1", "Boom", None, Level::Error).await.unwrap();
-        assert_eq!(issue2.count, 2);
-        assert_eq!(issue2.id, issue.id);
-    }
-
-    #[tokio::test]
-    async fn test_search_and_count() {
-        let db = open_backend().await;
-        db.create_project("app", "App").await.unwrap();
-        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
-        db.upsert_issue(&project.id, "fp1", "DatabaseError: connection lost", None, Level::Error).await.unwrap();
-        db.upsert_issue(&project.id, "fp2", "AuthError: bad token", None, Level::Warning).await.unwrap();
-
-        let results = db.search_issues("Database", None, None, None, 10, 0).await.unwrap();
-        assert_eq!(results.len(), 1);
-
-        let count = db.count_search_issues("error", None, None, None).await.unwrap();
-        assert_eq!(count, 2);
-    }
-
-    #[tokio::test]
-    async fn test_count_table_whitelist() {
-        let db = open_backend().await;
-        assert_eq!(db.count_table("projects").await.unwrap(), 0);
-        assert_eq!(db.count_table("DROP TABLE users").await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_ping() {
-        let db = open_backend().await;
-        assert!(db.ping().await.unwrap());
     }
 }
