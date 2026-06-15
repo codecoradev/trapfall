@@ -108,11 +108,19 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // Resolve database URL: --db flag or TRAPFALL_DATABASE_URL env var.
-    // Bare paths default to SQLite (e.g. "trapfall.db" -> "sqlite:trapfall.db").
+    // For `db` subcommands, the database is specified via --from/--to/--url flags,
+    // so we skip the global database init and early-return.
+    if let Some(Commands::Db { db_command }) = cli.command {
+        return match db_command {
+            DbCommands::Export { from, to } => trapfalld::migrate::export_database(&from, &to).await,
+            DbCommands::Import { from, to } => trapfalld::migrate::import_database(&from, &to).await,
+            DbCommands::Verify { url } => trapfalld::migrate::verify_database(&url).await,
+        };
+    }
+
+    // Normal commands: open global database.
     let db_url = trapfall_db::normalise_url(&cli.db);
     info!("Opening database: {db_url}");
-
     let backend = trapfall_db::open_database(&db_url).await?;
     {
         let pool = backend.sqlite_pool()?;
@@ -164,11 +172,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Mcp => trapfall_mcp::run_server(store).await,
-        Commands::Db { db_command } => match db_command {
-            DbCommands::Export { from, to } => trapfalld::migrate::export_database(&from, &to).await,
-            DbCommands::Import { from, to } => trapfalld::migrate::import_database(&from, &to).await,
-            DbCommands::Verify { url } => trapfalld::migrate::verify_database(&url).await,
-        },
+        Commands::Db { .. } => unreachable!("db commands handled via early return"),
     }
 }
 

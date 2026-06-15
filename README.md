@@ -18,6 +18,7 @@ Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them
 - **OpenAPI docs** — Swagger UI at `/api/docs`
 - **MCP server** — 12 AI agent tools via stdio JSON-RPC
 - **Tiny Docker image** — 5.75MB (scratch + MUSL static binary + rustls)
+- **Multi-backend database** — SQLite (default, zero-config) or Postgres (`--features postgres`)
 - **One-command deploy** — Docker Compose with persistent volume
 
 ## Quick Start
@@ -185,7 +186,7 @@ See [.env.example](.env.example) for full reference.
 
 | Layer | Tech |
 |-------|------|
-| Backend | Rust, Axum 0.8, SQLite (sqlx), tokio |
+| Backend | Rust, Axum 0.8, SQLite + Postgres (sqlx), tokio |
 | Frontend | SvelteKit 5, Tailwind v4, shadcn-svelte |
 | TLS | rustls (pure Rust, no OpenSSL) |
 | Fingerprinting | blake3 |
