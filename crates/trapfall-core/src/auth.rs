@@ -163,13 +163,7 @@ impl Store {
 
         self.backend().create_session(user_id, &token, &expires_at).await?;
 
-        Ok(Session {
-            id: new_id(),
-            user_id: user_id.to_string(),
-            token,
-            expires_at,
-            created_at,
-        })
+        Ok(Session { id: new_id(), user_id: user_id.to_string(), token, expires_at, created_at })
     }
 
     /// Get session by token (returns None if expired).

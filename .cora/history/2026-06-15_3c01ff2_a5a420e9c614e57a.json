@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-15T09:16:58.783917Z",
+  "commit": "3c01ff2",
+  "branch": "feat/db-trait-phase1",
+  "files_reviewed": 0,
+  "lines_reviewed": null,
+  "findings": {
+    "critical": 5
+  },
+  "categories": {
+    "other": 5
+  },
+  "quality_score": 0.0,
+  "gate_status": "disabled",
+  "duration_ms": null
+}

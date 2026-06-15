@@ -105,8 +105,7 @@ impl Database for SqliteBackend {
     }
 
     async fn rotate_dsn(&self, project_id: &str) -> Result<String> {
-        let project =
-            self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found"))?;
+        let project = self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found"))?;
         let host = project
             .dsn
             .split('@')
@@ -135,20 +134,14 @@ impl Database for SqliteBackend {
     }
 
     async fn unarchive_project(&self, project_id: &str) -> Result<()> {
-        sqlx::query("UPDATE projects SET archived_at = NULL WHERE id = ?")
-            .bind(project_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project_id).execute(&self.pool).await?;
         Ok(())
     }
 
     async fn delete_project(&self, project_id: &str) -> Result<bool> {
         sqlx::query("DELETE FROM events WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
         sqlx::query("DELETE FROM issues WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_history WHERE project_id = ?")
-            .bind(project_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("DELETE FROM alert_history WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
         sqlx::query("DELETE FROM alert_rules WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
         let result = sqlx::query("DELETE FROM projects WHERE id = ?").bind(project_id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
@@ -160,9 +153,7 @@ impl Database for SqliteBackend {
             .bind(project_id)
             .execute(&self.pool)
             .await?;
-        self.get_project_by_id(project_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Project not found after update"))
+        self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found after update"))
     }
 
     // ── Issues ─────────────────────────────────────────────────────────
@@ -399,8 +390,7 @@ impl Database for SqliteBackend {
             enabled: true,
             conditions: serde_json::from_str(conditions).unwrap_or(serde_json::Value::Object(Default::default())),
             action_type: action_type.to_string(),
-            action_config: serde_json::from_str(action_config)
-                .unwrap_or(serde_json::Value::Object(Default::default())),
+            action_config: serde_json::from_str(action_config).unwrap_or(serde_json::Value::Object(Default::default())),
             cooldown_seconds,
             created_at: now.clone(),
             updated_at: now,
@@ -1017,11 +1007,7 @@ mod tests {
     use super::*;
 
     async fn open_backend() -> SqliteBackend {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(4)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(4).connect("sqlite::memory:").await.unwrap();
         sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql"))
             .execute(&pool)
             .await
@@ -1053,16 +1039,10 @@ mod tests {
         db.create_project("app", "App").await.unwrap();
         let project = db.get_project_by_slug("app").await.unwrap().unwrap();
 
-        let issue = db
-            .upsert_issue(&project.id, "fp1", "Boom", None, Level::Error)
-            .await
-            .unwrap();
+        let issue = db.upsert_issue(&project.id, "fp1", "Boom", None, Level::Error).await.unwrap();
         assert_eq!(issue.count, 1);
 
-        let issue2 = db
-            .upsert_issue(&project.id, "fp1", "Boom", None, Level::Error)
-            .await
-            .unwrap();
+        let issue2 = db.upsert_issue(&project.id, "fp1", "Boom", None, Level::Error).await.unwrap();
         assert_eq!(issue2.count, 2);
         assert_eq!(issue2.id, issue.id);
     }
@@ -1072,12 +1052,8 @@ mod tests {
         let db = open_backend().await;
         db.create_project("app", "App").await.unwrap();
         let project = db.get_project_by_slug("app").await.unwrap().unwrap();
-        db.upsert_issue(&project.id, "fp1", "DatabaseError: connection lost", None, Level::Error)
-            .await
-            .unwrap();
-        db.upsert_issue(&project.id, "fp2", "AuthError: bad token", None, Level::Warning)
-            .await
-            .unwrap();
+        db.upsert_issue(&project.id, "fp1", "DatabaseError: connection lost", None, Level::Error).await.unwrap();
+        db.upsert_issue(&project.id, "fp2", "AuthError: bad token", None, Level::Warning).await.unwrap();
 
         let results = db.search_issues("Database", None, None, None, 10, 0).await.unwrap();
         assert_eq!(results.len(), 1);

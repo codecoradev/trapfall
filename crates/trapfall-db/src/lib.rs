@@ -16,9 +16,7 @@ pub use sqlite::SqliteBackend;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use trapfall_proto::{
-    AlertRule, Issue, IssueStatus, Level, Project, StoredEvent,
-};
+use trapfall_proto::{AlertRule, Issue, IssueStatus, Level, Project, StoredEvent};
 
 /// Generic database abstraction covering all storage operations used by TrapFall.
 ///

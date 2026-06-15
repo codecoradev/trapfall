@@ -151,9 +151,7 @@ impl Store {
         action_config: &str,
         cooldown_seconds: i64,
     ) -> Result<trapfall_proto::AlertRule> {
-        self.db
-            .create_alert_rule(project_id, name, conditions, action_type, action_config, cooldown_seconds)
-            .await
+        self.db.create_alert_rule(project_id, name, conditions, action_type, action_config, cooldown_seconds).await
     }
 
     pub async fn list_alert_rules(&self, project_id: &str) -> Result<Vec<trapfall_proto::AlertRule>> {
