@@ -100,7 +100,9 @@ async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()>
         .ok_or_else(|| anyhow::anyhow!("no url in action_config"))?;
 
     // SSRF protection: block internal/private IPs
-    if is_private_url(url) {
+    let url_owned = url.to_string();
+    let is_private = tokio::task::spawn_blocking(move || is_private_url(&url_owned)).await.unwrap_or(true);
+    if is_private {
         tracing::warn!("Webhook URL blocked (private/internal IP): {url}");
         anyhow::bail!("webhook URL points to private/internal address");
     }
@@ -120,7 +122,7 @@ async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()>
         }
     });
 
-    let resp = REQWEST_CLIENT.post(url).json(&payload).timeout(std::time::Duration::from_secs(10)).send().await?;
+    let resp = REQWEST_CLIENT.post(url).json(&payload).timeout(std::time::Duration::from_secs(5)).send().await?;
 
     if resp.status().is_success() {
         tracing::info!("Webhook dispatched to {url} for rule '{}'", rule.name);
@@ -182,6 +184,7 @@ fn ip_is_private(ip: std::net::IpAddr) -> bool {
 }
 
 /// Resolve a hostname to IP addresses (blocking DNS lookup).
+/// Called via spawn_blocking to avoid blocking the tokio runtime.
 fn dns_resolve_host(host: &str) -> std::io::Result<Vec<std::net::IpAddr>> {
     use std::net::ToSocketAddrs;
     // Append port 443 for resolution (required by ToSocketAddrs)

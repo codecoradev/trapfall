@@ -54,7 +54,7 @@ impl RateLimiter {
     }
 
     pub fn try_consume(&self, project_id: &str, cost: f64) -> bool {
-        let mut buckets = self.buckets.lock().unwrap();
+        let mut buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
 
         // Evict stale entries if at capacity
         if buckets.len() >= MAX_BUCKETS {
@@ -68,7 +68,7 @@ impl RateLimiter {
 
     #[allow(dead_code)]
     pub fn available_tokens(&self, project_id: &str) -> f64 {
-        let mut buckets = self.buckets.lock().unwrap();
+        let mut buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
         let bucket =
             buckets.entry(project_id.to_string()).or_insert_with(|| Bucket::new(self.max_tokens, self.refill_per_sec));
         bucket.refill();

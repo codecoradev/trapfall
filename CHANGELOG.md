@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-16
+
+### Fixed
+
+- **Rate limiter panic** (#196): `Mutex::lock().unwrap()` replaced with
+  poison-recovery pattern `unwrap_or_else(|e| e.into_inner())`
+- **Blocking DNS in SSRF check** (#202): `is_private_url` now runs via
+  `tokio::task::spawn_blocking` to avoid blocking async runtime
+- **IP spoofing via X-Forwarded-For** (#197): Extracted IP now validated
+  as `IpAddr` and only first entry taken from comma-separated list
+- **Webhook timeout** (#198): Reduced from 10s to 5s
+- **EventRow silent data loss** (#201): JSON parse failures now logged
+  via `tracing::warn` before falling back to null
+
 ## [0.1.0] - 2026-06-16
 
 ### Added
@@ -168,7 +182,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.1.0...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.1.1...develop
+[0.1.1]: https://github.com/codecoradev/trapfall/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/codecoradev/trapfall/compare/v0.0.5...v0.1.0
 [0.0.5]: https://github.com/codecoradev/trapfall/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/codecoradev/trapfall/compare/v0.0.3...v0.0.4
