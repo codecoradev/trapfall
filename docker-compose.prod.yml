@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────
+# TrapFall Production Docker Compose
+# ─────────────────────────────────────────────────────────────────────
+#
+# Quick start:
+#   1. Copy .env.production to .env, edit values
+#   2. docker compose up -d
+#   3. Open http://YOUR_VPS_IP:3000 → setup wizard
+#
+# SQLite mode (default, single file, zero extra deps):
+#   docker compose up -d
+#
+# Postgres mode (scalable, for production):
+#   Uncomment the 'postgres' service + set TRAPFALL_DATABASE_URL
+#   in .env, then: docker compose up -d
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  trapfall:
+    image: ghcr.io/codecoradev/trapfall:latest
+    container_name: trapfall
+    restart: unless-stopped
+    ports:
+      - "${TRAPFALL_PORT:-3000}:3000"
+    volumes:
+      - trapfall-data:/data
+    environment:
+      - RUST_LOG=${RUST_LOG:-trapfall=info}
+      - TRAPFALL_DATABASE_URL=${TRAPFALL_DATABASE_URL:-sqlite:/data/trapfall.db}
+      - TRAPFALL_SECURE_COOKIE=${TRAPFALL_SECURE_COOKIE:-true}
+      - TRAPFALL_CORS_ORIGINS=${TRAPFALL_CORS_ORIGINS:-}
+    command: >
+      serve
+      --listen 0.0.0.0:3000
+    healthcheck:
+      test: ["CMD", "/trapfall", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Depends on postgres if using Postgres backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+  # ── Postgres (uncomment if using Postgres backend) ──────────────────
+  # To use: set TRAPFALL_DATABASE_URL=postgres://trapfall:${POSTGRES_PASSWORD}@postgres:5432/trapfall
+  postgres:
+    image: postgres:17-alpine
+    container_name: trapfall-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=trapfall
+      - POSTGRES_USER=trapfall
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trapfall"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Only expose internally (trapfall connects via Docker network)
+    expose:
+      - "5432"
+    # Uncomment to access Postgres externally (for backups, admin tools)
+    # ports:
+    #   - "5432:5432"
+
+volumes:
+  trapfall-data:
+  postgres-data:

@@ -24,6 +24,7 @@ export default defineConfig({
           { text: 'Multi-Project', link: '/guide/multi-project' },
           { text: 'SDK Integration', link: '/guide/sdk-integration' },
           { text: 'Docker', link: '/guide/docker' },
+          { text: 'VPS Deployment', link: '/guide/vps-deployment' },
           { text: 'CLI Reference', link: '/guide/cli' },
           { text: 'SQLite → Postgres Migration', link: '/guide/migration' },
           { text: 'API Reference', link: '/guide/api' },
