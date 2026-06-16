@@ -69,13 +69,11 @@ pub struct EventRow {
 
 impl From<EventRow> for StoredEvent {
     fn from(r: EventRow) -> Self {
-        Self {
-            id: r.id,
-            issue_id: r.issue_id,
-            project_id: r.project_id,
-            data: serde_json::from_str(&r.data).unwrap_or(serde_json::Value::Null),
-            received_at: r.received_at,
-        }
+        let data = serde_json::from_str(&r.data).unwrap_or_else(|e| {
+            tracing::warn!("Failed to parse event data JSON: {e}");
+            serde_json::Value::Null
+        });
+        Self { id: r.id, issue_id: r.issue_id, project_id: r.project_id, data, received_at: r.received_at }
     }
 }
 

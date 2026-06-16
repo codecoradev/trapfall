@@ -147,11 +147,13 @@ pub async fn login(
 ) -> Result<(StatusCode, [(String, String); 1], Json<LoginResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = state.store.clone();
 
-    // Extract client IP (best-effort)
+    // Extract client IP (best-effort, first IP from XFF, validated)
     let ip = headers
         .get("x-forwarded-for")
         .or_else(|| headers.get("x-real-ip"))
         .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next().map(|s| s.trim()))
+        .filter(|s| s.parse::<std::net::IpAddr>().is_ok())
         .unwrap_or("unknown");
 
     match store.authenticate(&req.email, &req.password, ip).await {
