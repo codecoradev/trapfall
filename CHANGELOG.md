@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-16
+
 ### Added
 
 - **Postgres backend** (#168): full `PostgresBackend` implementation of `Database` trait
@@ -26,6 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Import JSONL to Postgres with automatic schema setup
   - Verify row counts and health check
   - Migration guide in `docs/guide/migration.md`
+- **TRAPFALL_LISTEN env var**: `Serve` command now reads from env
+
+### Fixed
+
+- **Axum routing bug**: `.nest()` + `.merge()` caused API routes to return SPA HTML.
+  Replaced with flat routing + `.route_layer()`.
+- **Search pagination bug**: Search used 0-indexed page offset, frontend sends 1-indexed.
+  Fixed to `(page - 1) * per_page`.
+- **require_auth whitelist**: Public routes (setup, login, health, metrics) now bypass auth.
+- **db verify CLI**: Opens correct database via `--url` flag (early-return for Db subcommands).
+
+### Changed
+
+- SqlitePool purge: all core crates route through `dyn Database` (37 → 7 leak points)
+- Core library crates (proto, db, core, ingest, search) are backend-agnostic
+- Ready for Postgres Phase 3 and future crates.io publish
 
 ## [0.0.5] - 2026-06-15
 
@@ -150,7 +168,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.0.5...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.1.0...develop
+[0.1.0]: https://github.com/codecoradev/trapfall/compare/v0.0.5...v0.1.0
 [0.0.5]: https://github.com/codecoradev/trapfall/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/codecoradev/trapfall/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/codecoradev/trapfall/compare/v0.0.2...v0.0.3
