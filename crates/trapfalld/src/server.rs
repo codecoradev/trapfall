@@ -33,40 +33,33 @@ pub struct AppState {
 
 /// Build the Axum router.
 pub fn router(state: AppState) -> Router {
-    let auth_routes = crate::auth::auth_routes();
-
-    // ── Dashboard API (auth-protected) ───────────────────────────
-    let dashboard_api = Router::new()
-        .route("/projects", get(list_projects).post(create_project))
-        .route("/projects/{slug}", get(get_project).delete(delete_project).patch(update_project))
-        .route("/projects/{slug}/archive", post(archive_project).delete(unarchive_project))
-        .route("/projects/{slug}/rotate-dsn", post(rotate_dsn))
-        .route("/projects/{slug}/issues", get(list_issues))
-        .route("/issues/{issue_id}", get(get_issue))
-        .route("/issues/{issue_id}/status", post(set_issue_status))
-        .route("/issues/{issue_id}/events", get(list_events))
-        // Alert Rules
-        .route("/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
-        .route("/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
-        .route("/rules/{rule_id}/toggle", post(toggle_alert_rule))
-        // Auth /me (protected)
-        .route("/auth/me", get(crate::auth::me))
-        .route("/auth/change-password", post(crate::auth::change_password))
-        // Search
-        .route("/projects/{slug}/search", get(search_issues))
-        .layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth));
-
+    // All API routes flat — no .nest() to avoid Axum 0.8 routing quirks.
+    // require_auth middleware whitelists public routes (setup, login, logout).
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
         // Public ingest API (DSN key auth)
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
-        // Auth routes (public, under /api/0)
-        .merge(auth_routes)
-        // Protected dashboard routes
-        .nest("/api/0", dashboard_api)
-        // WebSocket (auth via cookie, outside middleware to allow upgrade)
+        // Auth + dashboard routes
+        .route("/api/0/setup", get(crate::auth::setup_status).post(crate::auth::setup))
+        .route("/api/0/auth/login", post(crate::auth::login))
+        .route("/api/0/auth/logout", post(crate::auth::logout))
+        .route("/api/0/projects", get(list_projects).post(create_project))
+        .route("/api/0/projects/{slug}", get(get_project).delete(delete_project).patch(update_project))
+        .route("/api/0/projects/{slug}/archive", post(archive_project).delete(unarchive_project))
+        .route("/api/0/projects/{slug}/rotate-dsn", post(rotate_dsn))
+        .route("/api/0/projects/{slug}/issues", get(list_issues))
+        .route("/api/0/issues/{issue_id}", get(get_issue))
+        .route("/api/0/issues/{issue_id}/status", post(set_issue_status))
+        .route("/api/0/issues/{issue_id}/events", get(list_events))
+        .route("/api/0/projects/{slug}/rules", get(list_alert_rules).post(create_alert_rule))
+        .route("/api/0/rules/{rule_id}", get(get_alert_rule).delete(delete_alert_rule))
+        .route("/api/0/rules/{rule_id}/toggle", post(toggle_alert_rule))
+        .route("/api/0/auth/me", get(crate::auth::me))
+        .route("/api/0/auth/change-password", post(crate::auth::change_password))
+        .route("/api/0/projects/{slug}/search", get(search_issues))
         .route("/api/0/ws", get(crate::ws::ws_handler))
+        .route_layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth))
         .fallback(crate::spa::spa_handler)
         .layer(build_cors_layer(&state.config))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10 MB max body size (DoS protection)
@@ -508,6 +501,7 @@ struct SearchQuery {
     q: String,
     status: Option<String>,
     level: Option<String>,
+    per_page: Option<i64>,
     limit: Option<i64>,
     page: Option<i64>,
 }
@@ -523,9 +517,10 @@ async fn search_issues(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let limit = query.limit.unwrap_or(50).min(100);
-    let page = query.page.unwrap_or(0).max(0);
-    let offset = page * limit;
+    // Frontend sends per_page (preferred) or limit, and page is 1-indexed.
+    let per_page = query.per_page.or(query.limit).unwrap_or(50).clamp(1, 100);
+    let page = query.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * per_page;
 
     let total = trapfall_search::count_search_issues(
         &state.store,
@@ -543,13 +538,13 @@ async fn search_issues(
         Some(&project.id),
         query.status.as_deref(),
         query.level.as_deref(),
-        limit,
+        per_page,
         offset,
     )
     .await
     {
         Ok(issues) => {
-            Json(ListResponse { data: issues, total, page: page as u32, per_page: limit as u32 }).into_response()
+            Json(ListResponse { data: issues, total, page: page as u32, per_page: per_page as u32 }).into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
