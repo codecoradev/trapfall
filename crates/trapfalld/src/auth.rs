@@ -86,14 +86,14 @@ pub fn protected_routes(state: AppState) -> Router<AppState> {
 // ── Handlers ───────────────────────────────────────────────────────────
 
 /// GET /api/setup — Check if setup is needed.
-async fn setup_status(State(state): State<AppState>) -> Json<SetupStatus> {
+pub async fn setup_status(State(state): State<AppState>) -> Json<SetupStatus> {
     let store = state.store.clone();
     let has = store.has_users().await.unwrap_or(false);
     Json(SetupStatus { needs_setup: !has })
 }
 
 /// POST /api/setup — Create first admin + default project + auto-login.
-async fn setup(
+pub async fn setup(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(req): Json<SetupRequest>,
@@ -140,7 +140,7 @@ async fn setup(
 }
 
 /// POST /api/auth/login — Authenticate and set session cookie.
-async fn login(
+pub async fn login(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
@@ -175,7 +175,10 @@ async fn login(
 }
 
 /// POST /api/auth/logout — Clear session cookie.
-async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -> (StatusCode, [(String, String); 1]) {
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, [(String, String); 1]) {
     // Extract session token from cookie
     if let Some(token) = extract_session_token(&headers) {
         let store = state.store.clone();
@@ -230,6 +233,18 @@ pub async fn change_password(
 
 /// Auth middleware — extracts session cookie, validates, injects user.
 pub async fn require_auth(State(state): State<AppState>, mut req: Request<axum::body::Body>, next: Next) -> Response {
+    // Public routes that don't require authentication
+    let path = req.uri().path();
+    let is_public = path.ends_with("/setup")
+        || path.ends_with("/auth/login")
+        || path.ends_with("/auth/logout")
+        || path == "/health"
+        || path == "/metrics"
+        || path.contains("/envelope/");
+    if is_public {
+        return next.run(req).await;
+    }
+
     let reject = |msg: &str| -> Response {
         (StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: msg.to_string() })).into_response()
     };
