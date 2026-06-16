@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-16
+
+### Fixed
+
+- **Postgres support built-in by default** (#207): Docker image dan binary release
+  sekarang include Postgres driver. Tidak perlu `--features postgres` lagi.
+  User bisa langsung set `TRAPFALL_DATABASE_URL=postgres://...` tanpa build dari source.
+
 ## [0.1.1] - 2026-06-16
 
 ### Fixed
@@ -182,7 +190,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.1.1...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.1.2...develop
+[0.1.2]: https://github.com/codecoradev/trapfall/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/codecoradev/trapfall/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/codecoradev/trapfall/compare/v0.0.5...v0.1.0
 [0.0.5]: https://github.com/codecoradev/trapfall/compare/v0.0.4...v0.0.5

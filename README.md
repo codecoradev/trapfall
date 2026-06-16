@@ -18,7 +18,7 @@ Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them
 - **OpenAPI docs** — Swagger UI at `/api/docs`
 - **MCP server** — 12 AI agent tools via stdio JSON-RPC
 - **Tiny Docker image** — 5.75MB (scratch + MUSL static binary + rustls)
-- **Multi-backend database** — SQLite (default, zero-config) or Postgres (`--features postgres`)
+- **Multi-backend database** — SQLite (default, zero-config) or Postgres (built-in, no extra flags needed)
 - **One-command deploy** — Docker Compose with persistent volume
 
 ## Quick Start

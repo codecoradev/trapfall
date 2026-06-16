@@ -34,12 +34,12 @@ RUN mkdir -p crates/trapfall-proto/src && echo "" > crates/trapfall-proto/src/li
     mkdir -p crates/trapfall-mcp/src && echo "" > crates/trapfall-mcp/src/lib.rs && \
     mkdir -p crates/trapfall-dashboard/src && echo "" > crates/trapfall-dashboard/src/lib.rs && \
     mkdir -p crates/trapfalld/src && echo "fn main() {}" > crates/trapfalld/src/main.rs
-RUN cargo build --release --bin trapfall 2>/dev/null || true
+RUN cargo build --release --features postgres --bin trapfall 2>/dev/null || true
 
 # Copy real source and rebuild
 COPY . .
 COPY --from=frontend /app/web/build web/build
-RUN touch crates/*/src/*.rs && cargo build --release --bin trapfall
+RUN touch crates/*/src/*.rs && cargo build --release --features postgres --bin trapfall
 
 # ── Stage 3: Scratch runtime (zero OS overhead) ───────────────────────
 FROM scratch
