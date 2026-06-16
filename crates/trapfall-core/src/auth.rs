@@ -88,6 +88,13 @@ pub fn validate_password(password: &str) -> Result<(), String> {
     if password.len() < MIN_PASSWORD_LEN {
         return Err(format!("Password must be at least {MIN_PASSWORD_LEN} characters"));
     }
+    // Complexity: require at least one letter and one digit.
+    // Intentionally lenient — admin-chosen passwords, not user-self-service.
+    let has_letter = password.chars().any(|c| c.is_alphabetic());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    if !has_letter || !has_digit {
+        return Err("Password must contain at least one letter and one digit".to_string());
+    }
     Ok(())
 }
 
@@ -290,12 +297,14 @@ mod tests {
     #[test]
     fn test_validate_password_too_short() {
         assert!(validate_password("short").is_err());
-        assert!(validate_password("longenough").is_ok());
+        assert!(validate_password("longenough1").is_ok());
+        assert!(validate_password("longenough").is_err()); // no digit
+        assert!(validate_password("12345678").is_err()); // no letter
     }
 
     #[test]
     fn test_validate_password_exact_minimum() {
-        assert!(validate_password("12345678").is_ok()); // exactly 8
+        assert!(validate_password("abcd1234").is_ok()); // exactly 8, has letter+digit
         assert!(validate_password("1234567").is_err()); // 7
     }
 
@@ -358,7 +367,7 @@ mod tests {
         }
         let store = Store::new(backend);
 
-        store.create_user("pw@test.com", "PW Test", "oldpassword").await.unwrap();
+        store.create_user("pw@test.com", "PW Test", "oldpassword1").await.unwrap();
 
         // Change password
         store
@@ -367,7 +376,7 @@ mod tests {
             .unwrap();
 
         // Old password should fail
-        let result = store.authenticate("pw@test.com", "oldpassword", "127.0.0.1").await;
+        let result = store.authenticate("pw@test.com", "oldpassword1", "127.0.0.1").await;
         assert!(result.is_err());
 
         // New password should work
