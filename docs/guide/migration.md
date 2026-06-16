@@ -5,7 +5,7 @@ TrapFall supports migrating from SQLite to Postgres using the built-in `db` CLI 
 ## Prerequisites
 
 - Postgres 14+ running and accessible
-- TrapFall binary built with `--features postgres`
+- TrapFall binary atau Docker image (Postgres sudah built-in sejak v0.1.2)
 
 ## Steps
 

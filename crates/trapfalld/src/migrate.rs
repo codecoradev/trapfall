@@ -16,7 +16,7 @@
 //! ```
 
 use anyhow::{Context, Result};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::Row;
 
 /// Tables to export/import, in FK-safe order (parents before children).

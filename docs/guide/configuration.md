@@ -21,7 +21,7 @@ TrapFall supports selecting a database backend via URL scheme:
 TRAPFALL_DATABASE_URL=trapfall.db               # → sqlite:trapfall.db
 TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db   # explicit
 
-# Postgres (requires postgres Cargo feature)
+# Postgres (built-in, no extra build flags needed)
 TRAPFALL_DATABASE_URL=postgres://user:pass@host:5432/trapfall
 ```
 
