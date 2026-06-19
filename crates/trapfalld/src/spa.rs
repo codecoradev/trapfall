@@ -34,14 +34,15 @@ pub async fn spa_handler(uri: axum::http::Uri) -> Response {
             .into_response();
     }
 
-    // Fallback to index.html for client-side routing
-    match Assets::get("index.html") {
-        Some(file) => (
-            StatusCode::OK,
-            [(header::CACHE_CONTROL, "no-cache")],
-            Html(String::from_utf8_lossy(&file.data).to_string()),
-        )
-            .into_response(),
+    // Fallback to index.html for client-side routing. The embedded asset is
+    // static for the lifetime of the binary, so cache the decoded string once
+    // instead of re-allocating per request.
+    use std::sync::OnceLock;
+    static INDEX_HTML: OnceLock<Option<String>> = OnceLock::new();
+    let html =
+        INDEX_HTML.get_or_init(|| Assets::get("index.html").map(|f| String::from_utf8_lossy(&f.data).into_owned()));
+    match html {
+        Some(h) => (StatusCode::OK, [(header::CACHE_CONTROL, "no-cache")], Html(h.clone())).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }

@@ -248,11 +248,8 @@ pub fn mask_dsn_key(dsn: &str) -> String {
     }
     let key = &dsn[scheme_end..at_idx];
     let rest = &dsn[at_idx..];
-    let masked_key = if key.len() >= 12 {
-        format!("{}...{}", &key[..8], &key[key.len() - 4..])
-    } else {
-        "...".to_string()
-    };
+    let masked_key =
+        if key.len() >= 12 { format!("{}...{}", &key[..8], &key[key.len() - 4..]) } else { "...".to_string() };
     // `dsn[..scheme_end]` is `https://`; `rest` is `@host/id`.
     format!("{}{}{}", &dsn[..scheme_end], masked_key, rest)
 }

@@ -355,7 +355,11 @@ async fn list_issues(
     let page = query.page.max(1);
     let offset = ((page - 1) * limit as u32) as i64;
 
-    let total = store.count_issues(&project.id, query.status.as_deref(), query.level.as_deref()).await.unwrap_or(0);
+    let total =
+        store.count_issues(&project.id, query.status.as_deref(), query.level.as_deref()).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, project_slug = %slug, "count_issues failed");
+            0
+        });
     let issues = store
         .list_issues_filtered(&project.id, query.status.as_deref(), query.level.as_deref(), limit, offset)
         .await
@@ -412,7 +416,10 @@ async fn list_events(
     let page = query.page.max(1);
     let offset = ((page - 1) * limit as u32) as i64;
 
-    let total = store.count_events(&issue_id).await.unwrap_or(0);
+    let total = store.count_events(&issue_id).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, issue_id = %issue_id, "count_events failed");
+        0
+    });
     let events = store.list_events(&issue_id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(ListResponse { data: events, total, page, per_page: limit as u32 }))
@@ -540,7 +547,10 @@ async fn search_issues(
         query.level.as_deref(),
     )
     .await
-    .unwrap_or(0);
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, query = %query.q, "count_search_issues failed");
+        0
+    });
 
     match trapfall_search::search_issues(
         &state.store,

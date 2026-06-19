@@ -39,11 +39,20 @@ pub async fn swagger_ui() -> Html<&'static str> {
     Html(SWAGGER_HTML)
 }
 
-pub async fn openapi_spec() -> axum::response::Html<String> {
+pub async fn openapi_spec() -> impl axum::response::IntoResponse {
     let spec = OpenApiAssets::get("openapi.yaml")
         .map(|f| String::from_utf8_lossy(&f.data).to_string())
         .unwrap_or_else(|| "openapi: 3.0.3\ninfo:\n  title: TrapFall API\n  version: \"0.0.0\"".to_string());
-    axum::response::Html(spec)
+    // Serve as YAML, not HTML — tooling (openapi-generator, redocly, etc.) parse
+    // the body and rely on the content-type.
+    (
+        axum::http::StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/yaml; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-cache"),
+        ],
+        spec,
+    )
 }
 
 pub fn swagger_routes() -> Router<()> {
