@@ -840,9 +840,9 @@ mod tests {
         for _ in 0..N {
             let db = db.clone();
             let pid = project.id.clone();
-            handles.push(tokio::spawn(async move {
-                db.upsert_issue(&pid, "fp-shared", "Boom", None, Level::Error).await
-            }));
+            handles.push(tokio::spawn(
+                async move { db.upsert_issue(&pid, "fp-shared", "Boom", None, Level::Error).await },
+            ));
         }
         for h in handles {
             h.await.unwrap().unwrap();

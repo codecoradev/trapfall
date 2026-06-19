@@ -316,9 +316,7 @@ async fn list_issues_page_zero_does_not_underflow() {
     // is private, we exercise it via the public route by setting up a session.
     //
     // Setup wizard creates an admin + default project + sets a session cookie.
-    let setup_body = Body::from(
-        r#"{"email":"admin@test.com","name":"Admin","password":"password12345"}"#,
-    );
+    let setup_body = Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password12345"}"#);
     let setup_req = Request::builder()
         .method("POST")
         .uri("/api/0/setup")

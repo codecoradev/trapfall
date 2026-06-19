@@ -91,9 +91,7 @@ impl Config {
 fn parse_cors_origins() -> Vec<String> {
     std::env::var("TRAPFALL_CORS_ORIGINS")
         .ok()
-        .map(|s| {
-            s.split(',').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect()
-        })
+        .map(|s| s.split(',').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect())
         .unwrap_or_default()
 }
 
@@ -124,11 +122,8 @@ fn parse_public_url() -> Option<String> {
 /// `trapfall.example.com:3000`. Returns just the authority component so it
 /// can be composed into a Sentry-style DSN (`https://<key>@<host>/<id>`).
 fn normalize_dsn_host(raw: &str) -> String {
-    let stripped = raw
-        .trim()
-        .strip_prefix("https://")
-        .or_else(|| raw.trim().strip_prefix("http://"))
-        .unwrap_or(raw.trim());
+    let stripped =
+        raw.trim().strip_prefix("https://").or_else(|| raw.trim().strip_prefix("http://")).unwrap_or(raw.trim());
     // Drop any trailing path / slash — we only want the authority.
     let authority = stripped.split('/').next().unwrap_or(stripped);
     authority.to_string()
