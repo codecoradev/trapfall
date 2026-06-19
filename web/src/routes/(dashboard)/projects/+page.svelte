@@ -12,6 +12,9 @@
 	let loading = $state(true);
 	let error = $state('');
 	let showDsn: Record<string, boolean> = $state({});
+	/** Cache of full (un-masked) DSNs, fetched on-demand when the user reveals one. */
+	let revealedDsn: Record<string, string> = $state({});
+	let revealing: Record<string, boolean> = $state({});
 	let showAddForm = $state(false);
 	let showEditForm: string | null = $state(null);
 	let openMenu: string | null = $state(null);
@@ -24,8 +27,27 @@
 
 	let editName = $state('');
 
-	function toggleDsn(id: string) {
-		showDsn[id] = !showDsn[id];
+	async function toggleDsn(project: Project) {
+		const id = project.id;
+		if (showDsn[id]) {
+			showDsn[id] = false;
+			return;
+		}
+		// First reveal for this project — fetch the full DSN from the
+		// per-project endpoint (the list response returns a masked DSN).
+		if (!revealedDsn[id]) {
+			revealing[id] = true;
+			try {
+				const full = await api.getProject(project.slug);
+				revealedDsn[id] = full.dsn;
+			} catch (e) {
+				error = `Failed to load DSN: ${(e as Error).message}`;
+				return;
+			} finally {
+				revealing[id] = false;
+			}
+		}
+		showDsn[id] = true;
 	}
 
 	function copyToClipboard(text: string) {
@@ -119,6 +141,9 @@
 		try {
 			const updated = await api.rotateDsn(slug);
 			await loadProjects();
+			// rotateDsn returns the full (un-masked) DSN — cache it so the
+			// 'Show' button displays the real value without an extra fetch.
+			revealedDsn[updated.id] = updated.dsn;
 			showDsn[updated.id] = true;
 		} catch (e: any) {
 			error = e?.message || 'Failed to rotate DSN';
@@ -295,13 +320,26 @@
 								<p class="text-xs text-muted-foreground mb-1">DSN (use this in your SDK)</p>
 								<div class="flex items-center gap-2">
 									<code class="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
-										{showDsn[project.id] ? project.dsn : '••••••••••••••••'}
+										{#if showDsn[project.id]}
+											{revealedDsn[project.id] ?? 'Loading…'}
+										{:else}
+											••••••••••••••••
+										{/if}
 									</code>
-									<Button variant="ghost" size="sm" onclick={() => toggleDsn(project.id)}>
-										{showDsn[project.id] ? 'Hide' : 'Show'}
+									<Button
+										variant="ghost"
+										size="sm"
+										onclick={() => toggleDsn(project)}
+										disabled={revealing[project.id]}
+									>
+										{showDsn[project.id] ? 'Hide' : revealing[project.id] ? '…' : 'Show'}
 									</Button>
-									{#if showDsn[project.id]}
-										<Button variant="ghost" size="sm" onclick={() => copyToClipboard(project.dsn)}>
+									{#if showDsn[project.id] && revealedDsn[project.id]}
+										<Button
+											variant="ghost"
+											size="sm"
+											onclick={() => copyToClipboard(revealedDsn[project.id])}
+										>
 											Copy
 										</Button>
 									{/if}
