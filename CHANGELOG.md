@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable public URL for DSN generation** (#210): new
+  `TRAPFALL_PUBLIC_URL` env var (legacy alias `TRAPFALL_DSN_HOST`) lets
+  operators pin the host used when minting project DSNs, instead of
+  trusting the per-request `Host` header. Config loading centralized in
+  `Config::from_env()`.
+
+### Fixed
+
+- **Atomic project deletion** (#209): `delete_project` now wraps its 5
+  cascading DELETEs in a single transaction (SQLite + Postgres). A
+  mid-sequence failure no longer leaves orphaned rows.
+- **Lost-update race in `upsert_issue`** (#209): SQLite implementation
+  replaced SELECT-then-UPDATE with an atomic
+  `INSERT ... ON CONFLICT DO UPDATE`, so concurrent ingest no longer
+  drops event counts.
+- **Pagination underflow on `?page=0`** (#211): `page` is now clamped to
+  a minimum of 1 across issue + event listing endpoints, preventing a
+  `u32` wrap-around that produced invalid offsets.
+- **Hardcoded `db_path`** (#210): `Config.db_path` now reflects the
+  actual resolved database URL instead of always `"trapfall.db"`.
+
 ## [0.1.2] - 2026-06-16
 
 ### Fixed

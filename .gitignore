@@ -35,3 +35,4 @@ perf.data
 docs/node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
+.cora/history/

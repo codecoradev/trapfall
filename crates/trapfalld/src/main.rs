@@ -21,7 +21,7 @@ struct Cli {
     db: String,
 
     /// Log level
-    #[arg(short, long, global = true, default_value = "info")]
+    #[arg(short = 'L', long, global = true, default_value = "info")]
     log_level: String,
 
     #[command(subcommand)]
@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
     let store = trapfall_core::Store::new(backend);
 
     match cli.command.unwrap_or(Commands::Serve { listen: "0.0.0.0:9090".into() }) {
-        Commands::Serve { listen } => run_server(store, listen).await,
+        Commands::Serve { listen } => run_server(store, listen, cli.db.clone()).await,
         Commands::ProjectList => {
             let projects = store.list_projects().await?;
             if projects.is_empty() {
@@ -176,20 +176,18 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_server(store: Store, listen: String) -> Result<()> {
+async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> {
     info!("TrapFall daemon starting");
 
-    let secure_cookie =
-        std::env::var("TRAPFALL_SECURE_COOKIE").map(|v| v.to_lowercase() != "false" && v != "0").unwrap_or(true);
-    let cors_origins = std::env::var("TRAPFALL_CORS_ORIGINS")
-        .map(|s| s.split(',').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect())
-        .unwrap_or_default();
-    let config = Config {
-        db_path: std::path::PathBuf::from("trapfall.db"),
-        listen_addr: listen.clone(),
-        cors_origins,
-        secure_cookie,
-    };
+    let config = Config::from_env(&db_url, &listen);
+    info!(
+        "Config: db={}, listen={}, secure_cookie={}, cors_origins={}, public_url={}",
+        config.db_path.display(),
+        config.listen_addr,
+        config.secure_cookie,
+        if config.cors_origins.is_empty() { "<all>" } else { "<restricted>" },
+        config.dsn_host().unwrap_or_else(|| "<unset, will use Host header>".into()),
+    );
 
     // Channel: ingest → digest
     let (ingest_tx, ingest_rx) = mpsc::channel::<trapfall_proto::IngestEvent>(1024);

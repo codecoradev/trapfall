@@ -48,6 +48,7 @@ fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
         listen_addr: "0.0.0.0:9090".into(),
         cors_origins: Vec::new(),
         secure_cookie: false,
+        public_url: None,
     };
     AppState { store, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
 }
@@ -294,4 +295,59 @@ async fn protected_route_rejects_without_cookie() {
     let req = Request::builder().uri("/api/0/auth/me").body(Body::empty()).unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ── Pagination regression test (#211) ──────────────────────────────────
+//
+// `?page=0` previously caused a `u32` underflow in the offset calculation
+// that panicked the worker (`attempt to subtract with overflow`). This test
+// pins the fix: clamping page to a minimum of 1, returning a normal 200
+// response instead of a 500 / connection drop.
+#[tokio::test]
+async fn list_issues_page_zero_does_not_underflow() {
+    let store = test_store().await;
+    seed_project(&store).await; // gives us a "test-project" with known DSN key
+    let state = make_state(store, RateLimiter::default());
+    let app = router(state);
+
+    // The auth middleware rejects unauthenticated requests, so we bypass the
+    // handler entirely by calling the router directly with a crafted request.
+    // Since this test is about the *handler logic* (not auth), and the handler
+    // is private, we exercise it via the public route by setting up a session.
+    //
+    // Setup wizard creates an admin + default project + sets a session cookie.
+    let setup_body = Body::from(r#"{"email":"admin@test.com","name":"Admin","password":"password12345"}"#);
+    let setup_req = Request::builder()
+        .method("POST")
+        .uri("/api/0/setup")
+        .header("content-type", "application/json")
+        .body(setup_body)
+        .unwrap();
+    let setup_resp = app.clone().oneshot(setup_req).await.unwrap();
+    assert_eq!(setup_resp.status(), StatusCode::CREATED, "setup must succeed");
+
+    // Extract the session cookie from the Set-Cookie header.
+    let cookie = setup_resp
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(';').next())
+        .expect("setup must set a session cookie")
+        .to_string();
+
+    // Hit list_issues with page=0 — previously panicked the worker.
+    let req = Request::builder()
+        .uri("/api/0/projects/default/issues?page=0&per_page=5")
+        .header("cookie", &cookie)
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "page=0 must return 200, not panic/500");
+
+    // The clamped page value should be reflected in the JSON response.
+    let body_bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(body["page"], 1, "page=0 must be clamped to 1 in the response");
+    assert_eq!(body["per_page"], 5);
+    assert_eq!(body["total"], 0);
 }
