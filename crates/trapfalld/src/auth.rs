@@ -113,12 +113,10 @@ pub async fn setup(
 
     // Create default project. Prefer configured public_url for DSN;
     // fall back to request Host header so local dev keeps working.
-    let configured_host = state.config.dsn_host();
-    let host = if !configured_host.is_empty() {
-        configured_host
-    } else {
-        headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000").to_string()
-    };
+    let host = state
+        .config
+        .dsn_host()
+        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000").to_string());
     let project = store
         .create_project_with_host("default", "Default Project", &host)
         .await

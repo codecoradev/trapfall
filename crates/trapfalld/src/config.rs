@@ -50,24 +50,23 @@ impl Config {
         if self.secure_cookie { "Secure" } else { "" }
     }
 
-    /// Host (or full base URL) to use when minting a DSN for new projects.
+    /// Explicitly-configured public host to use when minting DSNs for
+    /// new projects.
     ///
-    /// Order of preference:
-    /// 1. Explicit `public_url` env var (`TRAPFALL_PUBLIC_URL` /
-    ///    `TRAPFALL_DSN_HOST`).
-    /// 2. Fallback to `listen_addr`.
+    /// Backed by `TRAPFALL_PUBLIC_URL` (legacy alias `TRAPFALL_DSN_HOST`).
+    /// Returns `None` when unset — callers should then fall back to the
+    /// per-request `Host` header (useful for dev where the user accesses the
+    /// instance via `localhost:<port>`).
     ///
-    /// The returned string strips any trailing slash from a URL-style value so
-    /// callers can safely format it into a DSN.
-    pub fn dsn_host(&self) -> String {
-        let raw = self
-            .public_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&self.listen_addr)
-            .trim_end_matches('/');
-        raw.to_string()
+    /// The returned value is normalized to a bare host[:port] (scheme and
+    /// trailing slash stripped) because `generate_dsn_with` already prepends
+    /// `https://` to the host when composing a Sentry-compatible DSN.
+    ///
+    /// Note: we intentionally do **not** fall back to `listen_addr` here.
+    /// `listen_addr` defaults to `0.0.0.0:9090`, which is not a usable DSN
+    /// host (most network stacks reject `0.0.0.0` as a destination).
+    pub fn dsn_host(&self) -> Option<String> {
+        self.public_url.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(normalize_dsn_host)
     }
 
     /// Load configuration from environment variables.
@@ -118,6 +117,23 @@ fn parse_public_url() -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Normalize a user-provided public-URL value into a bare `host[:port]`.
+///
+/// Accepts all of: `https://trapfall.example.com`,
+/// `http://trapfall.example.com:3000`, `trapfall.example.com/`,
+/// `trapfall.example.com:3000`. Returns just the authority component so it
+/// can be composed into a Sentry-style DSN (`https://<key>@<host>/<id>`).
+fn normalize_dsn_host(raw: &str) -> String {
+    let stripped = raw
+        .trim()
+        .strip_prefix("https://")
+        .or_else(|| raw.trim().strip_prefix("http://"))
+        .unwrap_or(raw.trim());
+    // Drop any trailing path / slash — we only want the authority.
+    let authority = stripped.split('/').next().unwrap_or(stripped);
+    authority.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,23 +149,30 @@ mod tests {
     }
 
     #[test]
-    fn dsn_host_uses_public_url_when_set() {
+    fn dsn_host_strips_scheme_and_trailing_slash() {
         let mut cfg = base_cfg();
         cfg.public_url = Some("https://trapfall.example.com/".into());
-        assert_eq!(cfg.dsn_host(), "https://trapfall.example.com");
+        assert_eq!(cfg.dsn_host().as_deref(), Some("trapfall.example.com"));
+
+        cfg.public_url = Some("http://errors.app.io:3000/path".into());
+        assert_eq!(cfg.dsn_host().as_deref(), Some("errors.app.io:3000"));
+
+        // Bare host (no scheme) also accepted.
+        cfg.public_url = Some("trapfall.example.com".into());
+        assert_eq!(cfg.dsn_host().as_deref(), Some("trapfall.example.com"));
     }
 
     #[test]
-    fn dsn_host_falls_back_to_listen_addr() {
+    fn dsn_host_none_when_unset() {
         let cfg = base_cfg();
-        assert_eq!(cfg.dsn_host(), "0.0.0.0:9090");
+        assert_eq!(cfg.dsn_host(), None);
     }
 
     #[test]
-    fn dsn_host_ignores_empty_public_url() {
+    fn dsn_host_none_when_empty_or_whitespace() {
         let mut cfg = base_cfg();
         cfg.public_url = Some("   ".into());
-        assert_eq!(cfg.dsn_host(), "0.0.0.0:9090");
+        assert_eq!(cfg.dsn_host(), None);
     }
 
     #[test]

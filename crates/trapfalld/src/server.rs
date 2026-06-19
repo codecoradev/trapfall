@@ -94,9 +94,14 @@ async fn create_project(
 ) -> Result<(StatusCode, Json<trapfall_proto::Project>), StatusCode> {
     let store = state.store.clone();
     let slug = req.slug.unwrap_or_else(|| req.name.to_lowercase().replace(' ', "-"));
-    // Use request Host header for DSN generation
-    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000");
-    let project = store.create_project_with_host(&slug, &req.name, host).await.map_err(|e| {
+    // Prefer configured `public_url` (TRAPFALL_PUBLIC_URL) for DSN generation.
+    // Fall back to the request Host header so local dev keeps working without
+    // extra config (e.g. user accesses via http://localhost:3000).
+    let host = state
+        .config
+        .dsn_host()
+        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000").to_string());
+    let project = store.create_project_with_host(&slug, &req.name, &host).await.map_err(|e| {
         tracing::warn!("Create project failed: {e}");
         StatusCode::CONFLICT
     })?;
@@ -343,7 +348,8 @@ async fn list_issues(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let limit = query.per_page.min(100) as i64;
-    let offset = ((query.page - 1) * limit as u32) as i64;
+    let page = query.page.max(1);
+    let offset = ((page - 1) * limit as u32) as i64;
 
     let total = store.count_issues(&project.id, query.status.as_deref(), query.level.as_deref()).await.unwrap_or(0);
     let issues = store
@@ -351,7 +357,7 @@ async fn list_issues(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(ListResponse { data: issues, total, page: query.page, per_page: limit as u32 }))
+    Ok(Json(ListResponse { data: issues, total, page, per_page: limit as u32 }))
 }
 
 async fn get_issue(

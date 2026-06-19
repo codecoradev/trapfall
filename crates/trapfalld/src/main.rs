@@ -21,7 +21,7 @@ struct Cli {
     db: String,
 
     /// Log level
-    #[arg(short, long, global = true, default_value = "info")]
+    #[arg(short = 'L', long, global = true, default_value = "info")]
     log_level: String,
 
     #[command(subcommand)]
@@ -181,12 +181,12 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
 
     let config = Config::from_env(&db_url, &listen);
     info!(
-        "Config: db={}, listen={}, secure_cookie={}, cors_origins={}, dsn_host={}",
+        "Config: db={}, listen={}, secure_cookie={}, cors_origins={}, public_url={}",
         config.db_path.display(),
         config.listen_addr,
         config.secure_cookie,
         if config.cors_origins.is_empty() { "<all>" } else { "<restricted>" },
-        config.dsn_host(),
+        config.dsn_host().unwrap_or_else(|| "<unset, will use Host header>".into()),
     );
 
     // Channel: ingest → digest
