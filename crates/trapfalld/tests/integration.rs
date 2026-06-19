@@ -48,6 +48,7 @@ fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
         listen_addr: "0.0.0.0:9090".into(),
         cors_origins: Vec::new(),
         secure_cookie: false,
+        public_url: None,
     };
     AppState { store, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
 }

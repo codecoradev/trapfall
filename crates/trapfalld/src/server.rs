@@ -24,7 +24,6 @@ use trapfall_proto::{IngestEvent, IssueStatus, ListResponse};
 #[derive(Clone)]
 pub struct AppState {
     pub store: Store,
-    #[allow(dead_code)]
     pub config: Config,
     pub ingest_tx: mpsc::Sender<IngestEvent>,
     pub rate_limiter: crate::rate_limit::RateLimiter,
@@ -400,12 +399,13 @@ async fn list_events(
 ) -> Result<Json<ListResponse<trapfall_proto::StoredEvent>>, StatusCode> {
     let store = state.store.clone();
     let limit = query.per_page.min(100) as i64;
-    let offset = ((query.page - 1) * limit as u32) as i64;
+    let page = query.page.max(1);
+    let offset = ((page - 1) * limit as u32) as i64;
 
     let total = store.count_events(&issue_id).await.unwrap_or(0);
     let events = store.list_events(&issue_id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(ListResponse { data: events, total, page: query.page, per_page: limit as u32 }))
+    Ok(Json(ListResponse { data: events, total, page, per_page: limit as u32 }))
 }
 
 // ── Alert Rule Handlers ────────────────────────────────────────────────
