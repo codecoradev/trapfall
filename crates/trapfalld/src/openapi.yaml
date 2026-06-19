@@ -651,6 +651,10 @@ components:
           type: string
         dsn:
           type: string
+          description: |
+            Sentry-compatible DSN. In list responses the secret key is masked
+            (e.g. `https://3167cebd...366b@host/id`). Full DSN is returned
+            only on create / rotate / per-project GET.
         created_at:
           type: string
 

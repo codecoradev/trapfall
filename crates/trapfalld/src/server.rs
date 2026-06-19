@@ -77,7 +77,11 @@ async fn health() -> &'static str {
 async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
     let store = state.store.clone();
     let projects = store.list_projects().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(projects))
+    // Mask DSN secret keys in list responses. Dashboard clients can still see
+    // host + project id; full DSN is available via the per-project rotate
+    // endpoint (admin-only) and via the project detail view.
+    let masked = projects.into_iter().map(|p| p.masked_dsn()).collect();
+    Ok(Json(masked))
 }
 
 #[derive(serde::Deserialize)]

@@ -122,10 +122,10 @@ async fn main() -> Result<()> {
     let db_url = trapfall_db::normalise_url(&cli.db);
     info!("Opening database: {db_url}");
     let backend = trapfall_db::open_database(&db_url).await?;
-    {
-        let pool = backend.sqlite_pool()?;
-        trapfall_db::run_sqlite_migrations(pool).await?;
-    }
+    // Run idempotent schema migrations for whichever backend we got back.
+    // Dispatch happens inside the backend (trait method) so the daemon does
+    // not need to know whether it is talking to SQLite or Postgres.
+    backend.run_migrations().await?;
     let store = trapfall_core::Store::new(backend);
 
     match cli.command.unwrap_or(Commands::Serve { listen: "0.0.0.0:9090".into() }) {

@@ -217,6 +217,46 @@ pub struct Project {
     pub archived_at: Option<String>,
 }
 
+impl Project {
+    /// Mask the secret key in this project's DSN for safe display in
+    /// dashboard listings.
+    ///
+    /// Format: `https://{key8}...{key4}@{host}/{id}` — preserves the host +
+    /// project id (so the user knows where the DSN points) while hiding the
+    /// middle of the secret. Falls back to returning the DSN unchanged if it
+    /// does not match the expected `https://<key>@<host>/<id>` shape.
+    pub fn masked_dsn(&self) -> Project {
+        let masked = mask_dsn_key(&self.dsn);
+        Project { dsn: masked, ..self.clone() }
+    }
+}
+
+/// Mask the secret portion of a Sentry-style DSN.
+///
+/// Accepts `https://<key>@<host>/<id>` and returns
+/// `https://<key-first8>...<key-last4>@<host>/<id>`. Short keys (<12 chars)
+/// are fully replaced with `...`. Non-matching input is returned unchanged.
+pub fn mask_dsn_key(dsn: &str) -> String {
+    // Expect shape: scheme://key@host/path
+    let Some(scheme_slash) = dsn.find("://") else { return dsn.to_string() };
+    let scheme_end = scheme_slash + 3;
+    let Some(at_idx) = dsn[scheme_end..].find('@').map(|i| i + scheme_end) else {
+        return dsn.to_string();
+    };
+    if at_idx <= scheme_end {
+        return dsn.to_string();
+    }
+    let key = &dsn[scheme_end..at_idx];
+    let rest = &dsn[at_idx..];
+    let masked_key = if key.len() >= 12 {
+        format!("{}...{}", &key[..8], &key[key.len() - 4..])
+    } else {
+        "...".to_string()
+    };
+    // `dsn[..scheme_end]` is `https://`; `rest` is `@host/id`.
+    format!("{}{}{}", &dsn[..scheme_end], masked_key, rest)
+}
+
 /// Stored event (full detail).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredEvent {
@@ -367,5 +407,47 @@ mod tests {
         let back: ListResponse<i64> = serde_json::from_str(&json).unwrap();
         assert_eq!(back.data.len(), 3);
         assert_eq!(back.total, 3);
+    }
+
+    #[test]
+    fn mask_dsn_key_masks_middle_of_secret() {
+        let dsn = "https://3167cebd-abfb-4ee4-ae6a-fab02204366b@trapfall.example.com/proj-id";
+        let masked = mask_dsn_key(dsn);
+        assert_eq!(masked, "https://3167cebd...366b@trapfall.example.com/proj-id");
+        // Original must be unchanged (masking is non-destructive).
+        assert_ne!(masked, dsn);
+    }
+
+    #[test]
+    fn mask_dsn_key_handles_short_keys() {
+        // Key shorter than 12 chars collapses to "...".
+        let dsn = "https://abc@host/id";
+        assert_eq!(mask_dsn_key(dsn), "https://...@host/id");
+    }
+
+    #[test]
+    fn mask_dsn_key_passthrough_non_dsn_input() {
+        // No `@` -> return unchanged.
+        assert_eq!(mask_dsn_key("not-a-dsn"), "not-a-dsn");
+        // `@` before scheme end -> return unchanged.
+        assert_eq!(mask_dsn_key("weird@input"), "weird@input");
+    }
+
+    #[test]
+    fn project_masked_dsn_returns_clone_with_masked_field() {
+        let project = Project {
+            id: "proj-1".into(),
+            slug: "app".into(),
+            name: "App".into(),
+            dsn: "https://3167cebd-abfb-4ee4-ae6a-fab02204366b@host/p1".into(),
+            created_at: "2026-06-19T00:00:00Z".into(),
+            archived_at: None,
+        };
+        let masked = project.masked_dsn();
+        assert_eq!(masked.id, project.id);
+        assert_eq!(masked.slug, project.slug);
+        assert_eq!(masked.dsn, "https://3167cebd...366b@host/p1");
+        // Original must still contain the full key.
+        assert!(project.dsn.contains("abfb-4ee4-ae6a-fab02204366b"));
     }
 }
