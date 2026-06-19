@@ -139,12 +139,17 @@ impl Database for SqliteBackend {
     }
 
     async fn delete_project(&self, project_id: &str) -> Result<bool> {
-        sqlx::query("DELETE FROM events WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM issues WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_history WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_rules WHERE project_id = ?").bind(project_id).execute(&self.pool).await?;
-        let result = sqlx::query("DELETE FROM projects WHERE id = ?").bind(project_id).execute(&self.pool).await?;
-        Ok(result.rows_affected() > 0)
+        // Atomic: all-or-nothing. Partial deletes would leave orphaned rows
+        // (e.g. project gone but events remain).
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM events WHERE project_id = ?").bind(project_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM issues WHERE project_id = ?").bind(project_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM alert_history WHERE project_id = ?").bind(project_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM alert_rules WHERE project_id = ?").bind(project_id).execute(&mut *tx).await?;
+        let result = sqlx::query("DELETE FROM projects WHERE id = ?").bind(project_id).execute(&mut *tx).await?;
+        let affected = result.rows_affected() > 0;
+        tx.commit().await?;
+        Ok(affected)
     }
 
     async fn update_project(&self, project_id: &str, name: &str) -> Result<Project> {
@@ -176,70 +181,39 @@ impl Database for SqliteBackend {
         level: Level,
     ) -> Result<Issue> {
         let level_str = level_to_str(level);
+        let now = chrono::Utc::now().to_rfc3339();
 
-        let existing = sqlx::query_as::<_, IssueRow>(
-            "SELECT id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen FROM issues WHERE project_id = ? AND fingerprint = ?",
+        // Atomic upsert via ON CONFLICT — avoids the SELECT-then-UPDATE race
+        // where two concurrent ingests could both read count=N and both write
+        // N+1 (lost update). The unique constraint on (project_id, fingerprint)
+        // makes this safe.
+        let row = sqlx::query_as::<_, IssueRow>(
+            "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) \n             VALUES (?, ?, ?, ?, ?, 'unresolved', ?, 1, 0, ?, ?) \n             ON CONFLICT(project_id, fingerprint) DO UPDATE SET \n                 count = count + 1,\n                 last_seen = excluded.last_seen,\n                 level = excluded.level\n             RETURNING id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen",
         )
+        .bind(new_id())
         .bind(project_id)
         .bind(fingerprint)
-        .fetch_optional(&self.pool)
+        .bind(title)
+        .bind(culprit)
+        .bind(&level_str)
+        .bind(&now)
+        .bind(&now)
+        .fetch_one(&self.pool)
         .await?;
 
-        if let Some(row) = existing {
-            let new_count = row.count + 1;
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE issues SET count = ?, last_seen = ?, level = ? WHERE id = ?")
-                .bind(new_count)
-                .bind(&now)
-                .bind(&level_str)
-                .bind(&row.id)
-                .execute(&self.pool)
-                .await?;
-
-            Ok(Issue {
-                id: row.id,
-                project_id: row.project_id,
-                fingerprint: row.fingerprint,
-                title: row.title,
-                culprit: row.culprit,
-                status: str_to_status(&row.status),
-                level,
-                count: new_count,
-                user_count: row.user_count,
-                first_seen: row.first_seen,
-                last_seen: now,
-            })
-        } else {
-            let id = new_id();
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query(
-                "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, 'unresolved', ?, 1, 0, ?, ?)",
-            )
-            .bind(&id)
-            .bind(project_id)
-            .bind(fingerprint)
-            .bind(title)
-            .bind(culprit)
-            .bind(&level_str)
-            .bind(&now)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
-
-            Ok(Issue {
-                id,
-                project_id: project_id.to_string(),
-                fingerprint: fingerprint.to_string(),
-                title: title.to_string(),
-                culprit: culprit.map(|s| s.to_string()),
-                status: IssueStatus::Unresolved,
-                level,
-                count: 1,
-                user_count: 0,
-                first_seen: now.clone(),
-                last_seen: now,
-            })
-        }
+        Ok(Issue {
+            id: row.id,
+            project_id: row.project_id,
+            fingerprint: row.fingerprint,
+            title: row.title,
+            culprit: row.culprit,
+            status: str_to_status(&row.status),
+            level,
+            count: row.count,
+            user_count: row.user_count,
+            first_seen: row.first_seen,
+            last_seen: row.last_seen,
+        })
     }
 
     async fn get_issue(&self, issue_id: &str) -> Result<Option<Issue>> {
@@ -849,6 +823,54 @@ mod tests {
         let issue2 = db.upsert_issue(&project.id, "fp1", "Boom", None, Level::Error).await.unwrap();
         assert_eq!(issue2.count, 2);
         assert_eq!(issue2.id, issue.id);
+    }
+
+    /// Verify the atomic ON CONFLICT upsert doesn't lose increments under
+    /// concurrent writes. With the old SELECT-then-UPDATE path this would
+    /// race and land on a count well below N; the atomic upsert should be
+    /// lossless.
+    #[tokio::test]
+    async fn test_upsert_issue_concurrent_no_lost_updates() {
+        let db = std::sync::Arc::new(open_backend().await);
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        const N: usize = 50;
+        let mut handles = Vec::with_capacity(N);
+        for _ in 0..N {
+            let db = db.clone();
+            let pid = project.id.clone();
+            handles.push(tokio::spawn(async move {
+                db.upsert_issue(&pid, "fp-shared", "Boom", None, Level::Error).await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+
+        let issue = db.list_issues(&project.id, 100, 0).await.unwrap().pop().expect("issue must exist");
+        assert_eq!(issue.count, N as i64, "concurrent upserts must not lose increments");
+    }
+
+    /// `delete_project` must be atomic: if any child-row DELETE fails, no
+    /// rows should be removed. We verify the happy path fully clears every
+    /// related table.
+    #[tokio::test]
+    async fn test_delete_project_removes_all_related_rows() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        let issue = db.upsert_issue(&project.id, "fp1", "Boom", None, Level::Error).await.unwrap();
+        db.insert_event(&issue.id, &project.id, "{}").await.unwrap();
+
+        let deleted = db.delete_project(&project.id).await.unwrap();
+        assert!(deleted, "project should be deleted");
+
+        // Project + its issues + events should all be gone.
+        assert!(db.get_project_by_id(&project.id).await.unwrap().is_none());
+        assert!(db.list_issues(&project.id, 100, 0).await.unwrap().is_empty());
+        assert!(db.list_events(&issue.id, 100, 0).await.unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -140,12 +140,16 @@ impl Database for PostgresBackend {
     }
 
     async fn delete_project(&self, project_id: &str) -> Result<bool> {
-        sqlx::query("DELETE FROM events WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM issues WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_history WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM alert_rules WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
-        let result = sqlx::query("DELETE FROM projects WHERE id = $1").bind(project_id).execute(&self.pool).await?;
-        Ok(result.rows_affected() > 0)
+        // Atomic: all-or-nothing. Partial deletes would leave orphaned rows.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM events WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM issues WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM alert_history WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM alert_rules WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        let result = sqlx::query("DELETE FROM projects WHERE id = $1").bind(project_id).execute(&mut *tx).await?;
+        let affected = result.rows_affected() > 0;
+        tx.commit().await?;
+        Ok(affected)
     }
 
     async fn update_project(&self, project_id: &str, name: &str) -> Result<Project> {
