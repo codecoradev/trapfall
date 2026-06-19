@@ -41,6 +41,10 @@ impl Database for PostgresBackend {
         Err(anyhow::anyhow!("PostgresBackend does not expose a SqlitePool"))
     }
 
+    async fn run_migrations(&self) -> Result<()> {
+        crate::run_postgres_migrations(&self.pool).await
+    }
+
     // ── Projects ───────────────────────────────────────────────────────
 
     async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {

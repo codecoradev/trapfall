@@ -94,8 +94,8 @@ fn tools_list() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "project_slug": { "type": "string", "description": "Project slug" },
-                    "status": { "type": "string", "enum": ["unresolved","resolved","ignored"], "description": "Filter by status" },
-                    "level": { "type": "string", "enum": ["fatal","error","warning","info","debug"], "description": "Filter by level" },
+                    "status": { "type": "string", "enum": ["unresolved","resolved","ignored","regression"], "description": "Filter by status" },
+                    "level": { "type": "string", "enum": ["fatal","error","warning","info","debug","trace"], "description": "Filter by level" },
                     "limit": { "type": "integer", "description": "Max results (default 50)" }
                 },
                 "required": ["project_slug"]
@@ -126,7 +126,7 @@ fn tools_list() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "issue_id": { "type": "string", "description": "Issue ID" },
-                    "status": { "type": "string", "enum": ["resolved","ignored","unresolved"] }
+                    "status": { "type": "string", "enum": ["resolved","ignored","unresolved","regression"] }
                 },
                 "required": ["issue_id", "status"]
             }),
@@ -299,7 +299,7 @@ async fn tool_search_issues(args: Value, store: &Store) -> Result<Value, String>
     let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
 
     let project_id = if let Some(slug) = args.get("project_slug").and_then(|v| v.as_str()) {
-        resolve_slug(slug, store).await.ok().map(|p| p.id)
+        Some(resolve_slug(slug, store).await?.id)
     } else {
         None
     };

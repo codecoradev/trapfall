@@ -319,6 +319,14 @@ pub trait Database: Send + Sync {
     /// backends should return an error — they are not expected to satisfy
     /// SQLite-only callers.
     fn sqlite_pool(&self) -> Result<&sqlx::SqlitePool>;
+
+    /// Run all idempotent schema migrations for this backend.
+    ///
+    /// Dispatch is backend-specific — SQLite runs the embedded SQLite
+    /// migrations, Postgres runs the Postgres ones. Callers (e.g. the daemon
+    /// on startup) no longer need to know which backend they got back from
+    /// [`open_database`].
+    async fn run_migrations(&self) -> Result<()>;
 }
 
 // ── Auxiliary row types ────────────────────────────────────────────────

@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Postgres startup path** (#213): `main.rs` no longer assumes SQLite
+  when running migrations. New `Database::run_migrations()` trait method
+  dispatches to the correct backend — `postgres://` URLs now actually
+  boot the server (v0.1.2 advertised built-in Postgres but the migration
+  step crashed).
+- **DSN secret leak in project list** (#214): `GET /api/0/projects` now
+  masks the DSN secret key (`https://3167cebd...366b@host/id`). Full DSN
+  is still returned by create / rotate / single-project GET for admin
+  copy.
+- **MCP schema drift** (#215): `Level` enum now includes `trace`, and
+  `IssueStatus` now includes `regression`, matching the proto types.
+  Unknown slugs in `search_issues` now surface a JSON-RPC error instead
+  of silently searching across all projects.
+- **Silent DB error masking** (#216): `count_issues` / `count_events` /
+  `count_search_issues` failures now emit a `tracing::warn!` instead of
+  silently returning 0.
+- **OpenAPI content-type** (#216): `/api/docs/openapi.yaml` now serves
+  `application/yaml` instead of `text/html` so OpenAPI tooling can parse
+  it.
+- **Per-request HTML allocation** (#216): SPA `index.html` fallback is
+  cached in a `OnceLock` instead of being re-decoded per request.
 - **Atomic project deletion** (#209): `delete_project` now wraps its 5
   cascading DELETEs in a single transaction (SQLite + Postgres). A
   mid-sequence failure no longer leaves orphaned rows.

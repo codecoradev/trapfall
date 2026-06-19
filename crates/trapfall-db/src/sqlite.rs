@@ -38,6 +38,10 @@ impl Database for SqliteBackend {
         Ok(&self.pool)
     }
 
+    async fn run_migrations(&self) -> Result<()> {
+        crate::run_sqlite_migrations(&self.pool).await
+    }
+
     // ── Projects ───────────────────────────────────────────────────────
 
     async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
