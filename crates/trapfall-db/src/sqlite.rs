@@ -904,4 +904,167 @@ mod tests {
         let db = open_backend().await;
         assert!(db.ping().await.unwrap());
     }
+
+    // ── Pagination edge cases (#221) ───────────────────────────────────
+
+    /// Helper: seed a project with `n` unique issues and return the project ID.
+    async fn seed_project_with_issues(db: &SqliteBackend, slug: &str, n: usize) -> String {
+        db.create_project(slug, slug).await.unwrap();
+        let project = db.get_project_by_slug(slug).await.unwrap().unwrap();
+        for i in 0..n {
+            db.upsert_issue(&project.id, &format!("fp-{i}"), &format!("Error {i}"), None, Level::Error).await.unwrap();
+        }
+        project.id
+    }
+
+    /// `page=1` (offset=0): standard first page returns exactly `limit`
+    /// results when enough data exists, ordered by last_seen DESC.
+    #[tokio::test]
+    async fn test_pagination_first_page() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 15).await;
+
+        let page = db.list_issues(&pid, 5, 0).await.unwrap();
+        assert_eq!(page.len(), 5, "first page with limit=5 should return exactly 5 issues");
+    }
+
+    /// `page=0` should be clamped to page 1 by the caller. At the DB layer
+    /// this translates to `offset=0`. Verify that a caller simulating
+    /// `page.max(1)` logic gets offset=0 and identical results to page=1.
+    #[tokio::test]
+    async fn test_pagination_page_zero_clamped_to_offset_zero() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 10).await;
+
+        // Simulate server-layer clamping: page = page.max(1), offset = (page-1)*limit
+        let page_raw: i64 = 0;
+        let page_clamped = page_raw.max(1);
+        let limit: i64 = 5;
+        let offset = (page_clamped - 1) * limit;
+
+        let result = db.list_issues(&pid, limit, offset).await.unwrap();
+        let first_page = db.list_issues(&pid, limit, 0).await.unwrap();
+
+        assert_eq!(page_clamped, 1, "page=0 should be clamped to 1");
+        assert_eq!(offset, 0, "offset should be 0 after clamping");
+        assert_eq!(result.len(), 5);
+        assert_eq!(
+            result.iter().map(|i| &i.id).collect::<Vec<_>>(),
+            first_page.iter().map(|i| &i.id).collect::<Vec<_>>(),
+            "page=0 clamped should return the same results as page=1"
+        );
+    }
+
+    /// Requesting a page number beyond available data returns an empty vec,
+    /// not an error. With 15 issues and limit=5, page=10 (offset=45) is
+    /// well past the end.
+    #[tokio::test]
+    async fn test_pagination_beyond_total_returns_empty() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 15).await;
+
+        let result = db.list_issues(&pid, 5, 45).await.unwrap();
+        assert!(result.is_empty(), "offset beyond total should return empty vec, not error");
+
+        // Also test the exact boundary: offset == total returns empty.
+        let boundary = db.list_issues(&pid, 5, 15).await.unwrap();
+        assert!(boundary.is_empty(), "offset == total should return empty vec");
+    }
+
+    /// `per_page=0` (limit=0): SQLite returns zero rows without error.
+    /// This documents the DB-layer contract — the server clamps
+    /// per_page to a minimum via `per_page.min(100)` but doesn't enforce
+    /// a floor, so we verify limit=0 is safe at the DB level.
+    #[tokio::test]
+    async fn test_pagination_limit_zero_returns_empty() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 10).await;
+
+        let result = db.list_issues(&pid, 0, 0).await.unwrap();
+        assert!(result.is_empty(), "limit=0 should return empty vec without error");
+    }
+
+    /// Large `per_page` (limit=100, the server max) returns all available
+    /// results without error when total < limit.
+    #[tokio::test]
+    async fn test_pagination_large_limit_returns_all() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 12).await;
+
+        let result = db.list_issues(&pid, 100, 0).await.unwrap();
+        assert_eq!(result.len(), 12, "limit=100 with 12 issues should return all 12");
+
+        // Also verify limit larger than total (e.g. 1000)
+        let huge = db.list_issues(&pid, 1000, 0).await.unwrap();
+        assert_eq!(huge.len(), 12, "limit=1000 with 12 issues should return all 12");
+    }
+
+    /// Consistency: the sum of issues across all paginated pages must
+    /// equal `count_issues(project_id)`. This verifies no rows are
+    /// duplicated or dropped across page boundaries.
+    #[tokio::test]
+    async fn test_pagination_total_consistent_with_count() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 15).await;
+
+        let total = db.count_issues(&pid, None, None).await.unwrap();
+        assert_eq!(total, 15, "count_issues should report 15");
+
+        // Paginate through all issues with limit=6: pages → [6, 6, 3]
+        let limit: i64 = 6;
+        let mut collected = Vec::new();
+        let mut offset: i64 = 0;
+        loop {
+            let page = db.list_issues(&pid, limit, offset).await.unwrap();
+            if page.is_empty() {
+                break;
+            }
+            collected.extend(page);
+            offset += limit;
+        }
+
+        assert_eq!(collected.len(), 15, "pagination should collect exactly 15 issues");
+        assert_eq!(collected.len() as i64, total, "sum of pages must equal count_issues");
+
+        // Verify no duplicate IDs across pages.
+        let mut ids: Vec<_> = collected.iter().map(|i| i.id.clone()).collect();
+        ids.sort();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), 15, "no duplicate issue IDs across pages");
+    }
+
+    /// Pagination with filtered queries: `list_issues_filtered` and
+    /// `count_issues` with a level filter must be consistent across pages.
+    #[tokio::test]
+    async fn test_pagination_filtered_consistency() {
+        let db = open_backend().await;
+        let pid = seed_project_with_issues(&db, "pager", 10).await;
+        // Add some warning-level issues
+        for i in 0..5 {
+            db.upsert_issue(&pid, &format!("fp-warn-{i}"), &format!("Warning {i}"), None, Level::Warning)
+                .await
+                .unwrap();
+        }
+
+        let total_errors = db.count_issues(&pid, None, Some("error")).await.unwrap();
+        assert_eq!(total_errors, 10);
+
+        let total_warnings = db.count_issues(&pid, None, Some("warning")).await.unwrap();
+        assert_eq!(total_warnings, 5);
+
+        // Paginate through error issues only
+        let limit: i64 = 4;
+        let mut collected = Vec::new();
+        let mut offset: i64 = 0;
+        loop {
+            let page = db.list_issues_filtered(&pid, None, Some("error"), limit, offset).await.unwrap();
+            if page.is_empty() {
+                break;
+            }
+            collected.extend(page);
+            offset += limit;
+        }
+        assert_eq!(collected.len(), 10);
+        assert!(collected.iter().all(|i| matches!(i.level, Level::Error)));
+    }
 }
