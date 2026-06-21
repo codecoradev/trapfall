@@ -125,4 +125,65 @@ mod tests {
         limiter.try_consume("proj1", 3.0);
         assert_eq!(limiter.available_tokens("proj1"), 7.0);
     }
+
+    // ── Extended tests (#221) ───────────────────────────────────────
+
+    #[test]
+    fn cost_greater_than_max_is_rejected() {
+        // If a single request cost exceeds bucket capacity, it should fail
+        // immediately without driving tokens negative.
+        let limiter = RateLimiter::new(5.0, 0.0);
+        assert!(!limiter.try_consume("proj-big", 10.0));
+        // Bucket should still be full — rejected before deducting.
+        assert_eq!(limiter.available_tokens("proj-big"), 5.0);
+    }
+
+    #[test]
+    fn fractional_cost_accumulates_correctly() {
+        // Sub-integer costs should accumulate without rounding loss.
+        let limiter = RateLimiter::new(1.0, 0.0);
+        assert!(limiter.try_consume("proj-frac", 0.3));
+        assert!(limiter.try_consume("proj-frac", 0.3));
+        assert!(limiter.try_consume("proj-frac", 0.3));
+        // 0.9 consumed, 0.1 left — next 0.3 should fail.
+        assert!(!limiter.try_consume("proj-frac", 0.3));
+        assert!((limiter.available_tokens("proj-frac") - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn refill_does_not_exceed_max() {
+        // With a high refill rate, tokens should cap at max_tokens.
+        let limiter = RateLimiter::new(5.0, 1000.0);
+        limiter.try_consume("proj-cap", 3.0); // consume to 2.0
+        // Sleep enough for refill to completely fill the bucket.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // available_tokens triggers a refill which should cap at 5.0.
+        let tokens = limiter.available_tokens("proj-cap");
+        assert_eq!(tokens, 5.0, "tokens must be capped at max after refill, got {tokens}");
+    }
+
+    #[test]
+    fn unused_project_does_not_consume() {
+        // Querying available_tokens for a never-seen project should create
+        // a fresh full bucket without side-effects on others.
+        let limiter = RateLimiter::new(10.0, 0.0);
+        limiter.try_consume("proj-a", 5.0);
+        // proj-b has never been seen
+        assert_eq!(limiter.available_tokens("proj-b"), 10.0);
+        // proj-a is unaffected
+        assert_eq!(limiter.available_tokens("proj-a"), 5.0);
+    }
+
+    #[test]
+    fn zero_refill_is_hard_cap() {
+        // refill_per_sec = 0 means the bucket never recovers.
+        let limiter = RateLimiter::new(3.0, 0.0);
+        assert!(limiter.try_consume("proj-zero", 1.0));
+        assert!(limiter.try_consume("proj-zero", 1.0));
+        assert!(limiter.try_consume("proj-zero", 1.0));
+        assert!(!limiter.try_consume("proj-zero", 1.0));
+        // Still empty after waiting.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!limiter.try_consume("proj-zero", 1.0));
+    }
 }
