@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-19
+
+### Added
+
+- **Expanded unit test coverage for `trapfall-db`** (#221): +43 new test
+  functions covering error paths (FK violations, non-existent IDs, empty
+  results), `delete_project` cascade atomicity, `upsert_issue`
+  idempotency, and pagination edge cases (`page=0`, `page` beyond total,
+  `per_page=0`, large `per_page`).
+- **Expanded test coverage for `trapfalld`** (#221): +17 new test
+  functions covering auth middleware (expired/tampered/invalid session
+  tokens), handler response shapes (404 vs 400 vs 401 vs 403), rate
+  limiter edge cases (fractional cost, hard cap, refill ceiling), and
+  DSN masking edge cases.
+
+### Fixed
+
+- **Cookie advisory GHSA-pxg6-pf52-xh8x** (#220): `npm audit` in `web/`
+  no longer reports 7 low-severity vulnerabilities from transitive
+  `cookie < 0.7.0` dependency. Resolved via npm `overrides` forcing
+  `cookie@^0.7.2` (SvelteKit 3.0 stable not yet released).
+
+### Test count
+
+- Workspace total: 125 → **195+** tests (+70).
+
 ## [0.1.3] - 2026-06-19
 
 ### Added
