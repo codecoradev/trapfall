@@ -447,4 +447,59 @@ mod tests {
         // Original must still contain the full key.
         assert!(project.dsn.contains("abfb-4ee4-ae6a-fab02204366b"));
     }
+
+    // ── Extended edge cases (#221) ─────────────────────────────────
+
+    #[test]
+    fn mask_dsn_key_very_long_key() {
+        // Key much longer than 32 chars — only first 8 and last 4 survive.
+        let key = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ";
+        let dsn = format!("https://{key}@errors.example.com/proj-long");
+        let masked = mask_dsn_key(&dsn);
+        assert_eq!(masked, "https://abcdefgh...GHIJ@errors.example.com/proj-long");
+        // Middle bytes must not leak.
+        assert!(!masked.contains("ijklmnop"));
+    }
+
+    #[test]
+    fn mask_dsn_key_exactly_12_chars() {
+        // Boundary: key of exactly 12 chars takes the >= 12 path.
+        let dsn = "https://abcdefghijkl@host/id"; // key = "abcdefghijkl" (12 chars)
+        let masked = mask_dsn_key(dsn);
+        assert_eq!(masked, "https://abcdefgh...ijkl@host/id");
+    }
+
+    #[test]
+    fn mask_dsn_key_empty_key() {
+        // Edge: key between `://` and `@` is empty string (at_idx == scheme_end).
+        // The masking function guards against this and returns the DSN unchanged.
+        let dsn = "https://@host/id";
+        let masked = mask_dsn_key(dsn);
+        // Guard `at_idx <= scheme_end` triggers → passthrough.
+        assert_eq!(masked, dsn, "empty key falls through unchanged due to guard");
+    }
+
+    #[test]
+    fn mask_dsn_key_no_scheme_passthrough() {
+        // Input without `://` is returned as-is.
+        assert_eq!(mask_dsn_key("just-a-string"), "just-a-string");
+        assert_eq!(mask_dsn_key(""), "");
+    }
+
+    #[test]
+    fn mask_dsn_key_preserves_host_and_project() {
+        // Regardless of key length, host + project_id must be intact.
+        // We extract the suffix starting from '@' in the *original* DSN and
+        // check it appears identically in the masked output.
+        let cases = [
+            "https://abc@sub.domain.example.com:8443/org/proj-1",
+            "https://verylongkeyhere1234567890@localhost:3000/42",
+            "https://k@host/id",
+        ];
+        for dsn in cases {
+            let masked = mask_dsn_key(dsn);
+            let suffix = &dsn[dsn.find('@').unwrap()..];
+            assert!(masked.ends_with(suffix), "masked must preserve host/path, got {masked} for {dsn}");
+        }
+    }
 }
