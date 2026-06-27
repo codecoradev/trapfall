@@ -85,6 +85,37 @@ impl Config {
             public_url: parse_public_url(),
         }
     }
+
+    /// Returns the default data directory: `~/.codecora/trapfall/`.
+    ///
+    /// Override with `TRAPFALL_DATA_DIR` env var.
+    pub fn default_data_dir() -> PathBuf {
+        if let Ok(dir) = std::env::var("TRAPFALL_DATA_DIR") {
+            return PathBuf::from(dir);
+        }
+        // Use $HOME on Unix, fallback to current directory
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".into());
+        PathBuf::from(home).join(".codecora").join("trapfall")
+    }
+
+    /// Returns the default database path: `~/.codecora/trapfall/trapfall.db`.
+    ///
+    /// Only used when no explicit `TRAPFALL_DATABASE_URL` or `--db` is provided.
+    pub fn default_db_path() -> String {
+        let dir = Self::default_data_dir();
+        dir.join("trapfall.db").to_string_lossy().to_string()
+    }
+
+    /// Ensure the data directory exists, creating it if necessary.
+    pub fn ensure_data_dir(dir: &PathBuf) -> std::io::Result<()> {
+        if !dir.exists() {
+            std::fs::create_dir_all(dir)?;
+            tracing::info!("Created data directory: {}", dir.display());
+        }
+        Ok(())
+    }
 }
 
 /// Parse `TRAPFALL_CORS_ORIGINS` (comma-separated, trimmed, empty filtered).
@@ -135,7 +166,7 @@ mod tests {
 
     fn base_cfg() -> Config {
         Config {
-            db_path: PathBuf::from("trapfall.db"),
+            db_path: PathBuf::from("/tmp/test-trapfall.db"),
             listen_addr: "0.0.0.0:9090".into(),
             cors_origins: vec![],
             secure_cookie: true,
@@ -168,6 +199,32 @@ mod tests {
         let mut cfg = base_cfg();
         cfg.public_url = Some("   ".into());
         assert_eq!(cfg.dsn_host(), None);
+    }
+
+    #[test]
+    fn default_data_dir_uses_home() {
+        // Just verify it doesn't panic and contains codecora/trapfall
+        let dir = Config::default_data_dir();
+        let path = dir.to_string_lossy();
+        assert!(path.contains("codecora"), "path should contain codecora: {path}");
+        assert!(path.contains("trapfall"), "path should contain trapfall: {path}");
+    }
+
+    #[test]
+    fn default_db_path_contains_data_dir() {
+        let path = Config::default_db_path();
+        assert!(path.contains("codecora"), "path should contain codecora: {path}");
+        assert!(path.ends_with("trapfall.db"), "path should end with trapfall.db: {path}");
+    }
+
+    #[test]
+    fn ensure_data_dir_creates_directory() {
+        let dir = std::env::temp_dir().join("trapfall-test-ensure-dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!dir.exists());
+        Config::ensure_data_dir(&dir).unwrap();
+        assert!(dir.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

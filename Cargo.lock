@@ -2449,7 +2449,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_alert"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2462,7 +2462,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_core"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_dashboard"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "axum",
  "rust-embed",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_db"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_ingest"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2531,7 +2531,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_mcp"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_proto"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "trapfall_search"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "sqlx",
@@ -2569,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "trapfalld"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
