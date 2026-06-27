@@ -338,6 +338,104 @@ impl Database for PostgresBackend {
         Ok(count)
     }
 
+    // ── Transactions ───────────────────────────────────────────────────
+
+    async fn insert_transaction(&self, project_id: &str, transaction: &trapfall_proto::Transaction) -> Result<String> {
+        let id = new_id();
+        let duration_ms = (transaction.timestamp - transaction.start_timestamp) * 1000.0;
+        let status_str = span_status_to_str(trapfall_proto::SpanStatus::Ok);
+        let data = serde_json::to_string(transaction).unwrap_or_else(|_| "{}".to_string());
+        let now = now_rfc3339();
+        sqlx::query(
+            "INSERT INTO transactions (id, project_id, name, release, environment, duration_ms, status, data, received_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(&id)
+        .bind(project_id)
+        .bind(&transaction.transaction)
+        .bind(&transaction.release)
+        .bind(&transaction.environment)
+        .bind(duration_ms)
+        .bind(&status_str)
+        .bind(&data)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+
+        for span in &transaction.spans {
+            let span_id = new_id();
+            let start_offset_ms = (span.start_timestamp - transaction.start_timestamp) * 1000.0;
+            let span_duration_ms = (span.timestamp - span.start_timestamp) * 1000.0;
+            let span_status = span_status_to_str(span.status);
+            let span_data = serde_json::to_string(span).unwrap_or_else(|_| "{}".to_string());
+            sqlx::query(
+                "INSERT INTO transaction_spans (id, transaction_id, span_id, trace_id, parent_span_id, op, description, start_offset_ms, duration_ms, status, data) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            )
+            .bind(&span_id)
+            .bind(&id)
+            .bind(&span.span_id)
+            .bind(&span.trace_id)
+            .bind(&span.parent_span_id)
+            .bind(&span.op)
+            .bind(&span.description)
+            .bind(start_offset_ms)
+            .bind(span_duration_ms)
+            .bind(&span_status)
+            .bind(&span_data)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(id)
+    }
+
+    async fn list_transactions(
+        &self,
+        project_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::common::TransactionRow>> {
+        let rows = sqlx::query_as::<_, crate::common::TransactionRow>(
+            "SELECT * FROM transactions WHERE project_id = $1 ORDER BY received_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn get_transaction(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<(crate::common::TransactionRow, Vec<crate::common::SpanRow>)>> {
+        let tx_row = sqlx::query_as::<_, crate::common::TransactionRow>("SELECT * FROM transactions WHERE id = $1")
+            .bind(transaction_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match tx_row {
+            Some(row) => {
+                let spans = sqlx::query_as::<_, crate::common::SpanRow>(
+                    "SELECT * FROM transaction_spans WHERE transaction_id = $1",
+                )
+                .bind(transaction_id)
+                .fetch_all(&self.pool)
+                .await?;
+                Ok(Some((row, spans)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn count_transactions(&self, project_id: &str) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count)
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(

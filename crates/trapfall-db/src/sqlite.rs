@@ -342,6 +342,104 @@ impl Database for SqliteBackend {
         Ok(count)
     }
 
+    // ── Transactions ───────────────────────────────────────────────────
+
+    async fn insert_transaction(&self, project_id: &str, transaction: &trapfall_proto::Transaction) -> Result<String> {
+        let id = new_id();
+        let duration_ms = (transaction.timestamp - transaction.start_timestamp) * 1000.0;
+        let status_str = span_status_to_str(trapfall_proto::SpanStatus::Ok);
+        let data = serde_json::to_string(transaction).unwrap_or_else(|_| "{}".to_string());
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO transactions (id, project_id, name, release, environment, duration_ms, status, data, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(project_id)
+        .bind(&transaction.transaction)
+        .bind(&transaction.release)
+        .bind(&transaction.environment)
+        .bind(duration_ms)
+        .bind(&status_str)
+        .bind(&data)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+
+        for span in &transaction.spans {
+            let span_id = new_id();
+            let start_offset_ms = (span.start_timestamp - transaction.start_timestamp) * 1000.0;
+            let span_duration_ms = (span.timestamp - span.start_timestamp) * 1000.0;
+            let span_status = span_status_to_str(span.status);
+            let span_data = serde_json::to_string(span).unwrap_or_else(|_| "{}".to_string());
+            sqlx::query(
+                "INSERT INTO transaction_spans (id, transaction_id, span_id, trace_id, parent_span_id, op, description, start_offset_ms, duration_ms, status, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&span_id)
+            .bind(&id)
+            .bind(&span.span_id)
+            .bind(&span.trace_id)
+            .bind(&span.parent_span_id)
+            .bind(&span.op)
+            .bind(&span.description)
+            .bind(start_offset_ms)
+            .bind(span_duration_ms)
+            .bind(&span_status)
+            .bind(&span_data)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(id)
+    }
+
+    async fn list_transactions(
+        &self,
+        project_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::common::TransactionRow>> {
+        let rows = sqlx::query_as::<_, crate::common::TransactionRow>(
+            "SELECT * FROM transactions WHERE project_id = ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn get_transaction(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<(crate::common::TransactionRow, Vec<crate::common::SpanRow>)>> {
+        let tx_row = sqlx::query_as::<_, crate::common::TransactionRow>("SELECT * FROM transactions WHERE id = ?")
+            .bind(transaction_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match tx_row {
+            Some(row) => {
+                let spans = sqlx::query_as::<_, crate::common::SpanRow>(
+                    "SELECT * FROM transaction_spans WHERE transaction_id = ?",
+                )
+                .bind(transaction_id)
+                .fetch_all(&self.pool)
+                .await?;
+                Ok(Some((row, spans)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn count_transactions(&self, project_id: &str) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count)
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(
@@ -802,6 +900,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../trapfalld/migrations/20260613000001_transactions.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         SqliteBackend::new(pool)
     }
 
@@ -1066,5 +1168,88 @@ mod tests {
         }
         assert_eq!(collected.len(), 10);
         assert!(collected.iter().all(|i| matches!(i.level, Level::Error)));
+    }
+
+    // ── Transaction tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_insert_and_get_transaction() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        let tx = trapfall_proto::Transaction {
+            event_id: "e1".into(),
+            level: trapfall_proto::Level::Info,
+            transaction: "GET /api/health".into(),
+            start_timestamp: 1703894474.296,
+            timestamp: 1703894474.891,
+            release: Some("0.2.0".into()),
+            environment: Some("production".into()),
+            spans: vec![trapfall_proto::Span {
+                span_id: "sp1".into(),
+                trace_id: "tr1".into(),
+                parent_span_id: None,
+                op: Some("http.server".into()),
+                description: Some("handle".into()),
+                start_timestamp: 1703894474.296,
+                timestamp: 1703894474.891,
+                status: trapfall_proto::SpanStatus::Ok,
+                tags: None,
+                data: None,
+            }],
+            contexts: None,
+            request: None,
+            tags: None,
+            extra: None,
+        };
+
+        let tx_id = db.insert_transaction(&project.id, &tx).await.unwrap();
+        let (row, spans) = db.get_transaction(&tx_id).await.unwrap().unwrap();
+        assert_eq!(row.name, "GET /api/health");
+        assert_eq!(row.duration_ms.floor() as i64, 595);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].op.as_deref(), Some("http.server"));
+    }
+
+    #[tokio::test]
+    async fn test_list_transactions_with_pagination() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        for i in 0..5 {
+            let tx = trapfall_proto::Transaction {
+                event_id: format!("e{i}"),
+                level: trapfall_proto::Level::Info,
+                transaction: format!("GET /api/{i}"),
+                start_timestamp: 100.0,
+                timestamp: 200.0,
+                release: None,
+                environment: None,
+                spans: vec![],
+                contexts: None,
+                request: None,
+                tags: None,
+                extra: None,
+            };
+            db.insert_transaction(&project.id, &tx).await.unwrap();
+        }
+
+        let count = db.count_transactions(&project.id).await.unwrap();
+        assert_eq!(count, 5);
+
+        let page1 = db.list_transactions(&project.id, 2, 0).await.unwrap();
+        assert_eq!(page1.len(), 2);
+
+        let page2 = db.list_transactions(&project.id, 2, 2).await.unwrap();
+        assert_eq!(page2.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_transaction_not_found() {
+        let db = open_backend().await;
+        let result = db.get_transaction("nonexistent").await.unwrap();
+        assert!(result.is_none());
     }
 }
