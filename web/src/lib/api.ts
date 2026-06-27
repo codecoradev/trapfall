@@ -97,6 +97,7 @@ export interface SpanResponse {
 export interface TransactionDetailResponse extends TransactionResponse {
 	spans: SpanResponse[];
 
+}
 // ── Release Health ───────────────────────────────────────────────────
 
 export interface ReleaseHealthResponse {
@@ -115,7 +116,6 @@ export interface ReleaseHealthResponse {
 
 export interface CrashRateResponse {
 	crash_rate: number;
-}
 }
 class ApiClient {
 	private baseUrl: string;
