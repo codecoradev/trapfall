@@ -369,6 +369,59 @@ pub struct Transaction {
     pub extra: Option<serde_json::Value>,
 }
 
+// ── Session Types ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Ok,
+    Exited,
+    Crashed,
+    Abnormal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionAttributes {
+    pub release: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ip_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionUpdate {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distinct_id: Option<String>,
+    pub init: bool,
+    pub started: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+    pub status: SessionStatus,
+    pub errors: u64,
+    pub attributes: SessionAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionAggregateItem {
+    pub started: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distinct_id: Option<String>,
+    pub exited: u32,
+    pub errored: u32,
+    pub abnormal: u32,
+    pub crashed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionAggregates {
+    pub aggregates: Vec<SessionAggregateItem>,
+    pub attributes: SessionAttributes,
+}
+
 // ── Envelope Parsing Result ──
 
 /// Parsed result from a Sentry envelope — may contain multiple item types.
@@ -376,6 +429,8 @@ pub struct Transaction {
 pub struct ParsedEnvelope {
     pub events: Vec<Event>,
     pub transactions: Vec<Transaction>,
+    pub session_updates: Vec<SessionUpdate>,
+    pub session_aggregates: Vec<SessionAggregates>,
 }
 
 #[cfg(test)]
@@ -668,6 +723,8 @@ mod tests {
         let env = ParsedEnvelope::default();
         assert!(env.events.is_empty());
         assert!(env.transactions.is_empty());
+        assert!(env.session_updates.is_empty());
+        assert!(env.session_aggregates.is_empty());
     }
 
     #[test]
@@ -677,5 +734,73 @@ mod tests {
         assert_eq!(tx.event_id, "e1");
         assert!(tx.spans.is_empty());
         assert!(tx.release.is_none());
+    }
+    #[test]
+    fn serde_session_status() {
+        let s = SessionStatus::Crashed;
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"crashed\"");
+        let back: SessionStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, SessionStatus::Crashed);
+    }
+
+    #[test]
+    fn serde_session_update() {
+        let session = SessionUpdate {
+            session_id: "sess-123".into(),
+            distinct_id: Some("user-42".into()),
+            init: true,
+            started: "2026-06-27T10:00:00Z".into(),
+            duration: Some(59500.0),
+            status: SessionStatus::Ok,
+            errors: 0,
+            attributes: SessionAttributes {
+                release: "myapp@1.0.0".into(),
+                environment: Some("production".into()),
+                ip_address: Some("1.2.3.4".into()),
+                user_agent: Some("Mozilla/5.0".into()),
+            },
+        };
+        let json = serde_json::to_string(&session).unwrap();
+        let back: SessionUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "sess-123");
+        assert_eq!(back.status, SessionStatus::Ok);
+        assert_eq!(back.attributes.release, "myapp@1.0.0");
+        assert_eq!(back.errors, 0);
+    }
+
+    #[test]
+    fn serde_session_aggregates() {
+        let agg = SessionAggregates {
+            aggregates: vec![
+                SessionAggregateItem {
+                    started: "2026-06-27T10:00:00Z".into(),
+                    distinct_id: None,
+                    exited: 90,
+                    errored: 5,
+                    abnormal: 2,
+                    crashed: 3,
+                },
+                SessionAggregateItem {
+                    started: "2026-06-27T11:00:00Z".into(),
+                    distinct_id: None,
+                    exited: 80,
+                    errored: 10,
+                    abnormal: 1,
+                    crashed: 9,
+                },
+            ],
+            attributes: SessionAttributes {
+                release: "myapp@1.0.0".into(),
+                environment: Some("production".into()),
+                ip_address: None,
+                user_agent: None,
+            },
+        };
+        let json = serde_json::to_string(&agg).unwrap();
+        let back: SessionAggregates = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.aggregates.len(), 2);
+        assert_eq!(back.aggregates[0].crashed, 3);
+        assert_eq!(back.aggregates[1].exited, 80);
     }
 }
