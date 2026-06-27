@@ -130,6 +130,28 @@ impl Store {
         self.db.count_events(issue_id).await
     }
 
+    // ── Transactions ──────────────────────────────────────────────────────
+
+    pub async fn list_transactions(
+        &self,
+        project_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<trapfall_db::common::TransactionRow>> {
+        self.db.list_transactions(project_id, limit, offset).await
+    }
+
+    pub async fn get_transaction(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<(trapfall_db::common::TransactionRow, Vec<trapfall_db::common::SpanRow>)>> {
+        self.db.get_transaction(transaction_id).await
+    }
+
+    pub async fn count_transactions(&self, project_id: &str) -> Result<i64> {
+        self.db.count_transactions(project_id).await
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     pub async fn create_alert_rule(

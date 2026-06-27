@@ -105,3 +105,27 @@ export function timeAgo(dateStr: string): string {
 	if (months < 12) return `${months}mo ago`;
 	return `${Math.floor(months / 12)}y ago`;
 }
+
+// ── Duration formatting ───────────────────────────────────────────────
+
+/**
+ * Format milliseconds to human-readable string (e.g. "1.23s", "45ms").
+ */
+export function formatDuration(ms: number): string {
+	if (ms < 1) return '<1ms';
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	return `${(ms / 1000).toFixed(2)}s`;
+}
+
+/**
+ * Map transaction status to Tailwind text color class.
+ */
+export function transactionStatusTextClass(status: string): string {
+	const map: Record<string, string> = {
+		ok: 'text-green-600',
+		deadline_exceeded: 'text-red-500',
+		cancelled: 'text-yellow-500',
+		unknown: 'text-gray-500'
+	};
+	return map[status] ?? 'text-gray-500';
+}

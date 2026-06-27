@@ -70,6 +70,33 @@ export interface ListResponse<T> {
 	per_page: number;
 }
 
+
+// ── Transactions ──────────────────────────────────────────────────────
+
+export interface TransactionResponse {
+	id: string;
+	name: string;
+	release: string | null;
+	environment: string | null;
+	duration_ms: number;
+	status: string;
+	received_at: string;
+}
+
+export interface SpanResponse {
+	span_id: string;
+	trace_id: string;
+	parent_span_id: string | null;
+	op: string | null;
+	description: string | null;
+	start_offset_ms: number;
+	duration_ms: number;
+	status: string | null;
+}
+
+export interface TransactionDetailResponse extends TransactionResponse {
+	spans: SpanResponse[];
+}
 class ApiClient {
 	private baseUrl: string;
 
@@ -223,17 +250,22 @@ class ApiClient {
 			`/issues/${issueId}/events?page=${page}&per_page=${perPage}`
 		);
 	}
-}
+	// ── Transactions ──────────────────────────────────────────────────────
 
-export class ApiClientError extends Error {
-	constructor(
-		public status: number,
-		message: string
-	) {
-		super(message);
-		this.name = 'ApiClientError';
+	async listTransactions(projectSlug: string, page = 1, perPage = 20): Promise<ListResponse<TransactionResponse>> {
+		return this.get<ListResponse<TransactionResponse>>(`/projects/${projectSlug}/transactions?page=${page}&per_page=${perPage}`);
+	}
+
+	async getTransaction(projectSlug: string, txnId: string): Promise<TransactionDetailResponse> {
+		return this.get<TransactionDetailResponse>(`/projects/${projectSlug}/transactions/${txnId}`);
+	}
+
+	async getSlowestTransactions(projectSlug: string, limit = 5): Promise<TransactionResponse[]> {
+		return this.get<TransactionResponse[]>(`/projects/${projectSlug}/transactions/slowest?limit=${limit}`);
 	}
 }
+
+
 
 /** Redirect to login page (used on 401 responses). */
 function gotoLogin() {
