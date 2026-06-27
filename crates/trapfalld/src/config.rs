@@ -94,9 +94,7 @@ impl Config {
             return PathBuf::from(dir);
         }
         // Use $HOME on Unix, fallback to current directory
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".into());
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
         PathBuf::from(home).join(".codecora").join("trapfall")
     }
 
