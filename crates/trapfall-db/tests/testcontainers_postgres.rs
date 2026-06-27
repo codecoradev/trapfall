@@ -8,7 +8,7 @@
 mod common;
 
 use std::sync::Arc;
-use testcontainers::{runners::AsyncRunner, ContainerAsync, GenericImage, ImageExt};
+use testcontainers::{ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner};
 use trapfall_db::{Database, PostgresBackend};
 
 const PG_USER: &str = "trapfall_test";
@@ -35,10 +35,7 @@ async fn setup() -> (Arc<dyn Database>, ContainerAsync<GenericImage>) {
     let container = image.start().await.expect("failed to start postgres container");
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    let host_port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("no port mapping");
+    let host_port = container.get_host_port_ipv4(5432).await.expect("no port mapping");
 
     let url = format!("postgres://{PG_USER}:***@127.0.0.1:{host_port}/{PG_DB}");
 
@@ -47,9 +44,7 @@ async fn setup() -> (Arc<dyn Database>, ContainerAsync<GenericImage>) {
         .connect(&url)
         .await
         .expect("failed to connect to testcontainers postgres");
-    trapfall_db::run_postgres_migrations(&pool)
-        .await
-        .expect("failed to run migrations");
+    trapfall_db::run_postgres_migrations(&pool).await.expect("failed to run migrations");
 
     let db = Arc::new(PostgresBackend::new(pool)) as Arc<dyn Database>;
     (db, container)
