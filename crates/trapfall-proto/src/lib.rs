@@ -422,6 +422,22 @@ pub struct SessionAggregates {
     pub attributes: SessionAttributes,
 }
 
+// ── Attachment (binary payload) ──
+
+/// Binary attachment carried in a Sentry envelope item.
+/// Attachments are NOT JSON — they use length-delimited binary payloads.
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    /// Original filename from the envelope header.
+    pub filename: String,
+    /// MIME type (e.g. "image/png", "text/plain").
+    pub content_type: Option<String>,
+    /// Sentry attachment type (e.g. "event.attachment", "event.minidump").
+    pub attachment_type: Option<String>,
+    /// Raw binary payload bytes.
+    pub data: Vec<u8>,
+}
+
 // ── Envelope Parsing Result ──
 
 /// Parsed result from a Sentry envelope — may contain multiple item types.
@@ -431,6 +447,7 @@ pub struct ParsedEnvelope {
     pub transactions: Vec<Transaction>,
     pub session_updates: Vec<SessionUpdate>,
     pub session_aggregates: Vec<SessionAggregates>,
+    pub attachments: Vec<Attachment>,
 }
 
 #[cfg(test)]
@@ -721,6 +738,7 @@ mod tests {
     #[test]
     fn parsed_envelope_default_is_empty() {
         let env = ParsedEnvelope::default();
+        assert!(env.attachments.is_empty());
         assert!(env.events.is_empty());
         assert!(env.transactions.is_empty());
         assert!(env.session_updates.is_empty());
