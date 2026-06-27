@@ -179,6 +179,22 @@ pub struct SpanRow {
     pub data: String,
 }
 
+/// Stored release health row.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ReleaseHealthRow {
+    pub id: String,
+    pub project_id: String,
+    pub release: String,
+    pub environment: Option<String>,
+    pub started_at: String,
+    pub distinct_id: Option<String>,
+    pub exited: i64,
+    pub errored: i64,
+    pub abnormal: i64,
+    pub crashed: i64,
+    pub received_at: String,
+}
+
 // ── Shared helpers ───────────────────────────────────────────────────
 
 /// Generate a new UUID v4 string.
