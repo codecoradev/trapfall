@@ -129,3 +129,13 @@ export function transactionStatusTextClass(status: string): string {
 	};
 	return map[status] ?? 'text-gray-500';
 }
+
+/**
+ * Map crash rate to Tailwind text color class.
+ */
+export function crashRateColor(rate: number | null): string {
+	if (rate === null) return "";
+	if (rate < 1) return "text-green-500";
+	if (rate < 5) return "text-yellow-500";
+	return "text-red-500";
+}

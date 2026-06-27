@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use trapfall_db::Database;
-use trapfall_proto::{Issue, IssueStatus, Level, Project, StoredEvent};
+use trapfall_db::common::ReleaseHealthRow;
+use trapfall_proto::{Issue, IssueStatus, Level, Project, SessionAggregates, StoredEvent};
 
 #[derive(Clone)]
 pub struct Store {
@@ -150,6 +151,41 @@ impl Store {
 
     pub async fn count_transactions(&self, project_id: &str) -> Result<i64> {
         self.db.count_transactions(project_id).await
+    }
+
+    // ── Release Health ──────────────────────────────────────────────────
+
+    pub async fn insert_release_health(&self, project_id: &str, aggregates: &SessionAggregates) -> Result<usize> {
+        self.db.insert_release_health(project_id, aggregates).await
+    }
+
+    pub async fn get_crash_rate(
+        &self,
+        project_id: &str,
+        release: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<Option<f64>> {
+        self.db.get_crash_rate(project_id, release, env).await
+    }
+
+    pub async fn list_release_health(
+        &self,
+        project_id: &str,
+        release: Option<&str>,
+        env: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ReleaseHealthRow>> {
+        self.db.list_release_health(project_id, release, env, limit, offset).await
+    }
+
+    pub async fn count_release_health(
+        &self,
+        project_id: &str,
+        release: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<i64> {
+        self.db.count_release_health(project_id, release, env).await
     }
 
     // ── Alert Rules ────────────────────────────────────────────────────
