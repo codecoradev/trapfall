@@ -16,6 +16,9 @@
 //! ```
 
 use anyhow::{Context, Result};
+#[cfg(not(feature = "postgres"))]
+use serde_json::json;
+#[cfg(feature = "postgres")]
 use serde_json::{Value, json};
 use sqlx::Row;
 

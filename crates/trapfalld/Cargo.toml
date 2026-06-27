@@ -10,7 +10,8 @@ name = "trapfall"
 path = "src/main.rs"
 
 [features]
-default = ["postgres"]
+default = ["sqlite"]
+sqlite = ["trapfall_db/sqlite"]
 postgres = ["trapfall_db/postgres"]
 
 [dependencies]

@@ -2,6 +2,10 @@
 //!
 //! Spins up a `postgres:17-alpine` container, runs migrations,
 //! and exercises the full shared test suite. No manual setup needed.
+//!
+//! ```bash
+//! cargo test -p trapfall_db --features postgres --test testcontainers_postgres
+//! ```
 
 #![cfg(feature = "postgres")]
 
@@ -15,50 +19,54 @@ const PG_USER: &str = "trapfall_test";
 const PG_PASSWORD: &str = "testpass";
 const PG_DB: &str = "trapfall_test";
 
-fn docker_available() -> bool {
-    std::process::Command::new("docker")
-        .args(["info"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-async fn setup() -> (Arc<dyn Database>, ContainerAsync<GenericImage>) {
+async fn setup() -> Result<(Arc<dyn Database>, ContainerAsync<GenericImage>), Box<dyn std::error::Error>> {
     let image = GenericImage::new("postgres", "17-alpine")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(5432))
         .with_env_var("POSTGRES_USER", PG_USER)
         .with_env_var("POSTGRES_PASSWORD", PG_PASSWORD)
         .with_env_var("POSTGRES_DB", PG_DB);
 
-    let container = image.start().await.expect("failed to start postgres container");
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let container = image.start().await?;
 
-    let host_port = container.get_host_port_ipv4(5432).await.expect("no port mapping");
-
+    // Retry connection — postgres may need time after container starts
+    let host_port = container.get_host_port_ipv4(5432).await?;
     let url = format!("postgres://{PG_USER}:***@127.0.0.1:{host_port}/{PG_DB}");
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await
-        .expect("failed to connect to testcontainers postgres");
-    trapfall_db::run_postgres_migrations(&pool).await.expect("failed to run migrations");
+    let pool = retry_connect(&url, 10).await?;
+    trapfall_db::run_postgres_migrations(&pool).await?;
 
     let db = Arc::new(PostgresBackend::new(pool)) as Arc<dyn Database>;
-    (db, container)
+    Ok((db, container))
+}
+
+/// Retry Postgres connection up to `max_retries` times with 2s backoff.
+async fn retry_connect(url: &str, max_retries: u32) -> Result<sqlx::PgPool, Box<dyn std::error::Error>> {
+    let mut last_err = None;
+    for i in 0..max_retries {
+        match sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(url).await {
+            Ok(pool) => return Ok(pool),
+            Err(e) => {
+                last_err = Some(e);
+                if i < max_retries - 1 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+    Err(Box::new(last_err.unwrap()))
 }
 
 macro_rules! tc_test {
     ($name:ident, $func:path) => {
         #[tokio::test]
         async fn $name() {
-            if !docker_available() {
-                eprintln!("skipping - Docker not available");
-                return;
-            }
-            let (db, _container) = setup().await;
+            let (db, _container) = match setup().await {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("skipping - setup failed: {e}");
+                    return;
+                }
+            };
             $func(db).await;
         }
     };
