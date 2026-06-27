@@ -96,6 +96,26 @@ export interface SpanResponse {
 
 export interface TransactionDetailResponse extends TransactionResponse {
 	spans: SpanResponse[];
+
+// ── Release Health ───────────────────────────────────────────────────
+
+export interface ReleaseHealthResponse {
+	id: string;
+	release: string;
+	environment: string | null;
+	started_at: string;
+	distinct_id: string | null;
+	exited: number;
+	errored: number;
+	abnormal: number;
+	crashed: number;
+	crash_rate: number | null;
+	received_at: string;
+}
+
+export interface CrashRateResponse {
+	crash_rate: number;
+}
 }
 class ApiClient {
 	private baseUrl: string;
@@ -262,6 +282,24 @@ class ApiClient {
 
 	async getSlowestTransactions(projectSlug: string, limit = 5): Promise<TransactionResponse[]> {
 		return this.get<TransactionResponse[]>(`/projects/${projectSlug}/transactions/slowest?limit=${limit}`);
+	}
+
+	// ── Release Health ─────────────────────────────────────────────────
+
+	async listReleaseHealth(projectSlug: string, opts?: { page?: number; perPage?: number; release?: string; env?: string }): Promise<ListResponse<ReleaseHealthResponse>> {
+		const page = opts?.page ?? 1;
+		const perPage = opts?.perPage ?? 20;
+		let path = `/projects/${projectSlug}/release-health?page=${page}&per_page=${perPage}`;
+		if (opts?.release) path += `&release=${encodeURIComponent(opts.release)}`;
+		if (opts?.env) path += `&env=${encodeURIComponent(opts.env)}`;
+		return this.get<ListResponse<ReleaseHealthResponse>>(path);
+	}
+
+	async getCrashRate(projectSlug: string, release?: string, env?: string): Promise<CrashRateResponse> {
+		let path = `/projects/${projectSlug}/release-health/crash-rate`;
+		if (release) path += `?release=${encodeURIComponent(release)}`;
+		if (env) path += `&env=${encodeURIComponent(env)}`;
+		return this.get<CrashRateResponse>(path);
 	}
 }
 

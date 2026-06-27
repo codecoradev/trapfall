@@ -67,7 +67,45 @@ struct SpanResponse {
     status: Option<String>,
 }
 
-// ── Transaction Query Types ────────────────────────────────────────────
+// ── Release Health Response Types ─────────────────────────────────────
+
+#[derive(Serialize)]
+struct ReleaseHealthResponse {
+    id: String,
+    release: String,
+    environment: Option<String>,
+    started_at: String,
+    distinct_id: Option<String>,
+    exited: i64,
+    errored: i64,
+    abnormal: i64,
+    crashed: i64,
+    crash_rate: Option<f64>,
+    received_at: String,
+}
+
+#[derive(Serialize)]
+struct CrashRateResponse {
+    crash_rate: f64,
+}
+
+// ── Release Health Query Types ───────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ReleaseHealthQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_per_page")]
+    per_page: u32,
+    release: Option<String>,
+    env: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CrashRateQuery {
+    release: Option<String>,
+    env: Option<String>,
+}
 
 #[derive(Deserialize)]
 struct ListTransactionsQuery {
@@ -114,6 +152,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/auth/me", get(crate::auth::me))
         .route("/api/0/auth/change-password", post(crate::auth::change_password))
         .route("/api/0/projects/{slug}/search", get(search_issues))
+        .route("/api/0/projects/{slug}/release-health/crash-rate", get(get_crash_rate))
+        .route("/api/0/projects/{slug}/release-health", get(list_release_health))
         .route("/api/0/projects/{slug}/transactions", get(list_transactions))
         .route("/api/0/projects/{slug}/transactions/slowest", get(get_slowest_transactions))
         .route("/api/0/projects/{slug}/transactions/{txn_id}", get(get_transaction))
@@ -354,6 +394,14 @@ async fn ingest_envelope(
     // Transaction-only envelopes return 200 OK but data is not yet stored.
     if !parsed.transactions.is_empty() {
         tracing::info!("Skipping {} transactions (not yet persisted, see #237)", parsed.transactions.len());
+    }
+
+    // Persist session aggregates
+    for agg in &parsed.session_aggregates {
+        match store.insert_release_health(&project.id, agg).await {
+            Ok(n) => tracing::info!("Inserted {n} release health records"),
+            Err(e) => tracing::warn!("Failed to insert release health: {e}"),
+        }
     }
 
     if parsed.events.is_empty() && parsed.transactions.is_empty() {
@@ -749,6 +797,82 @@ async fn get_slowest_transactions(
         .collect();
 
     Ok(Json(data))
+}
+
+// ── Release Health Handlers ────────────────────────────────────────
+
+async fn list_release_health(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<ReleaseHealthQuery>,
+) -> Result<Json<ListResponse<ReleaseHealthResponse>>, StatusCode> {
+    let store = state.store.clone();
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let limit = query.per_page.min(100) as i64;
+    let page = query.page.max(1);
+    let offset = ((page - 1) * limit as u32) as i64;
+
+    let total = store
+        .count_release_health(&project.id, query.release.as_deref(), query.env.as_deref())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, project_slug = %slug, "count_release_health failed");
+            0
+        });
+    let rows = store
+        .list_release_health(&project.id, query.release.as_deref(), query.env.as_deref(), limit, offset)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let data: Vec<ReleaseHealthResponse> = rows
+        .into_iter()
+        .map(|r| {
+            let total_sessions = r.exited + r.errored + r.abnormal + r.crashed;
+            let crash_rate =
+                if total_sessions > 0 { Some(r.crashed as f64 / total_sessions as f64 * 100.0) } else { None };
+            ReleaseHealthResponse {
+                id: r.id,
+                release: r.release,
+                environment: r.environment,
+                started_at: r.started_at,
+                distinct_id: r.distinct_id,
+                exited: r.exited,
+                errored: r.errored,
+                abnormal: r.abnormal,
+                crashed: r.crashed,
+                crash_rate,
+                received_at: r.received_at,
+            }
+        })
+        .collect();
+
+    Ok(Json(ListResponse { data, total, page, per_page: limit as u32 }))
+}
+
+async fn get_crash_rate(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<CrashRateQuery>,
+) -> Result<Json<CrashRateResponse>, StatusCode> {
+    let store = state.store.clone();
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let rate = store
+        .get_crash_rate(&project.id, query.release.as_deref(), query.env.as_deref())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(CrashRateResponse { crash_rate: rate }))
 }
 
 // ── CORS Builder ──────────────────────────────────────────────────────

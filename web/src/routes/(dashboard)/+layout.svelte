@@ -42,6 +42,9 @@
 				<a href="/transactions" class="hover:text-foreground text-muted-foreground transition-colors">
 					Performance
 				</a>
+				<a href="/release-health" class="hover:text-foreground text-muted-foreground transition-colors">
+					Release Health
+				</a>
 				<a href="/settings" class="hover:text-foreground text-muted-foreground transition-colors">
 					Settings
 				</a>
