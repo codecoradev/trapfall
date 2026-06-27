@@ -1,13 +1,13 @@
 # Cora CLI — AI code review configuration
 # https://github.com/codecoradev/cora-cli
 #
-# Local dev: uses LiteLLM proxy (localhost:4000)
-# CI: overridden by CORA_API_KEY + CORA_BASE_URL env vars
+# Provider: FreeModel (gpt-5.4 via api.freemodel.dev)
+# API key: via CORA_API_KEY env var (Hermes injects from .env)
 
 provider:
   provider: openai
-  model: glm-5.1
-  base_url: http://localhost:4000
+  model: gpt-5.4
+  base_url: https://api.freemodel.dev/v1
 
 ignore:
   files:
