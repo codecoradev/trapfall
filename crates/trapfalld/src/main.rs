@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use trapfall_core::Store;
+use trapfalld::attachment_storage::AttachmentStorage;
 use trapfalld::{AppState, Config, DigestTask, WsHub, spawn_alert_engine};
 
 #[derive(Parser, Debug)]
@@ -222,8 +223,15 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
     };
 
     // App state
-    let state =
-        AppState { store, config, ingest_tx, rate_limiter: trapfalld::rate_limit::RateLimiter::default(), ws_hub };
+    let storage = AttachmentStorage::new(None);
+    let state = AppState {
+        store,
+        config,
+        ingest_tx,
+        rate_limiter: trapfalld::rate_limit::RateLimiter::default(),
+        ws_hub,
+        storage: std::sync::Arc::new(storage),
+    };
 
     // HTTP server
     let listener = tokio::net::TcpListener::bind(&listen).await?;

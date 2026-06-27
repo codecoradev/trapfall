@@ -377,3 +377,27 @@ export async function toggleAlertRule(ruleId: string, enabled: boolean): Promise
 }
 
 export const api = new ApiClient();
+
+
+// ── Attachments ──────────────────────────────────────────────────────
+
+export interface AttachmentItem {
+	id: string;
+	filename: string;
+	content_type: string | null;
+	attachment_type: string | null;
+	size_bytes: number;
+	created_at: string;
+}
+
+export async function fetchAttachments(eventId: string): Promise<AttachmentItem[]> {
+	const res = await fetch(`${API_BASE}/events/${eventId}/attachments`);
+	if (res.status === 401) { gotoLogin(); throw new Error('Not authenticated'); }
+	if (!res.ok) return [];
+	const data = await res.json();
+	return data.items || [];
+}
+
+export function getAttachmentDownloadUrl(attachmentId: string): string {
+	return `${API_BASE}/attachments/${attachmentId}/download`;
+}

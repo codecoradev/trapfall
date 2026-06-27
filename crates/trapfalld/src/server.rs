@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+use crate::attachment_storage::AttachmentStorage;
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use trapfall_core::Store;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub ingest_tx: mpsc::Sender<IngestEvent>,
     pub rate_limiter: crate::rate_limit::RateLimiter,
     pub ws_hub: crate::ws::WsHub,
+    pub storage: std::sync::Arc<AttachmentStorage>,
 }
 
 // ── Transaction Response Types ─────────────────────────────────────────
@@ -158,6 +160,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/projects/{slug}/transactions/slowest", get(get_slowest_transactions))
         .route("/api/0/projects/{slug}/transactions/{txn_id}", get(get_transaction))
         .route("/api/0/ws", get(crate::ws::ws_handler))
+        // Attachment endpoints
+        .route("/api/0/events/{event_id}/attachments", get(list_event_attachments))
+        .route("/api/0/attachments/{id}/download", get(download_attachment))
         .route_layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth))
         .fallback(crate::spa::spa_handler)
         .layer(build_cors_layer(&state.config))
@@ -402,6 +407,42 @@ async fn ingest_envelope(
             Ok(n) => tracing::info!("Inserted {n} release health records"),
             Err(e) => tracing::warn!("Failed to insert release health: {e}"),
         }
+    }
+
+    // Persist attachments — linked to the first event's event_id, or skipped if no events exist
+    if !parsed.attachments.is_empty() && !parsed.events.is_empty() {
+        let event_id_for_att = &parsed.events[0].event_id;
+        for attachment in &parsed.attachments {
+            let att_id = uuid::Uuid::new_v4().to_string();
+            let disk_path = state.storage.save(&project.id, &att_id, &attachment.data).unwrap_or_else(|e| {
+                tracing::warn!("Failed to save attachment to disk: {e}");
+                std::path::PathBuf::from(format!(
+                    "data/attachments/{}/{}/{}",
+                    project.id,
+                    &att_id[..2.min(att_id.len())],
+                    att_id
+                ))
+            });
+
+            let row = trapfall_db::common::AttachmentRow {
+                id: att_id,
+                event_id: event_id_for_att.clone(),
+                project_id: project.id.clone(),
+                filename: attachment.filename.clone(),
+                content_type: attachment.content_type.clone(),
+                attachment_type: attachment.attachment_type.clone(),
+                size_bytes: attachment.data.len() as i64,
+                disk_path: disk_path.to_string_lossy().to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+
+            match state.store.insert_attachment(&row).await {
+                Ok(_) => tracing::info!("Stored attachment: {}", row.filename),
+                Err(e) => tracing::warn!("Failed to insert attachment metadata: {e}"),
+            }
+        }
+    } else if !parsed.attachments.is_empty() {
+        tracing::info!("Skipping {} attachment(s): no events to associate with", parsed.attachments.len());
     }
 
     if parsed.events.is_empty() && parsed.transactions.is_empty() {
@@ -873,6 +914,79 @@ async fn get_crash_rate(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(Json(CrashRateResponse { crash_rate: rate }))
+}
+
+// ── Attachment Response Types ────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AttachmentResponse {
+    id: String,
+    filename: String,
+    content_type: Option<String>,
+    attachment_type: Option<String>,
+    size_bytes: i64,
+    created_at: String,
+}
+
+// ── Attachment Handlers ─────────────────────────────────────────────────
+
+async fn list_event_attachments(
+    _auth: AuthenticatedUser,
+    Path(event_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.store.list_attachments_by_event(&event_id).await {
+        Ok(rows) => {
+            let items: Vec<AttachmentResponse> = rows
+                .into_iter()
+                .map(|r| AttachmentResponse {
+                    id: r.id,
+                    filename: r.filename,
+                    content_type: r.content_type,
+                    attachment_type: r.attachment_type,
+                    size_bytes: r.size_bytes,
+                    created_at: r.created_at,
+                })
+                .collect();
+            Json(serde_json::json!({ "items": items })).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("list_event_attachments failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn download_attachment(
+    _auth: AuthenticatedUser,
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.store.get_attachment(&id).await {
+        Ok(Some(row)) => match state.storage.read(&row.disk_path) {
+            Ok(data) => {
+                let content_type = row.content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+                let headers = [
+                    (
+                        axum::http::header::CONTENT_TYPE,
+                        content_type.parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
+                    ),
+                    (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", row.filename)),
+                    (axum::http::header::CONTENT_LENGTH, row.size_bytes.to_string()),
+                ];
+                (StatusCode::OK, headers, data).into_response()
+            }
+            Err(e) => {
+                tracing::warn!("Failed to read attachment file: {e}");
+                StatusCode::NOT_FOUND.into_response()
+            }
+        },
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            tracing::warn!("get_attachment failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 // ── CORS Builder ──────────────────────────────────────────────────────
