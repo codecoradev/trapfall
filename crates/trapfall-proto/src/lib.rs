@@ -302,7 +302,6 @@ pub struct AlertHistory {
     pub sent_at: Option<String>,
 }
 
-
 // ── Transaction (Inbound) ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -659,5 +658,4 @@ mod tests {
         assert!(tx.spans.is_empty());
         assert!(tx.release.is_none());
     }
-
 }
