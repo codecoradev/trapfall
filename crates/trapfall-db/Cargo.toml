@@ -27,3 +27,5 @@ tokio = { workspace = true }
 trapfall_proto = { workspace = true }
 trapfall_db = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite", "postgres"] }
+testcontainers = "0.24"
+
