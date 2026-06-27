@@ -1,23 +1,182 @@
 //! Sentry envelope parser.
 //!
 //! Handles both gzip-compressed and plaintext Sentry envelopes.
-//! Each envelope is a multipart text body with JSON headers.
+//! Each envelope is a multipart body with JSON headers and either text or
+//! binary payloads. Binary payloads (attachments) are length-delimited and
+//! may contain arbitrary bytes including `\n`.
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::io::Read;
-use trapfall_proto::{Event, ParsedEnvelope, SessionAggregates, SessionUpdate, Transaction};
+use trapfall_proto::{Attachment, Event, ParsedEnvelope, SessionAggregates, SessionUpdate, Transaction};
 
-/// Parse a Sentry envelope body into individual events and transactions.
+// ── Internal helpers ─────────────────────────────────────────────────────
+
+/// Parsed item header from a single envelope line.
+#[derive(Debug, Default)]
+struct ItemHeader {
+    item_type: String,
+    length: Option<usize>,
+    filename: Option<String>,
+    content_type: Option<String>,
+    attachment_type: Option<String>,
+}
+
+/// Find the position of the next `\n` byte starting from `start`.
+fn find_newline(data: &[u8], start: usize) -> Option<usize> {
+    data[start..].iter().position(|&b| b == b'\n').map(|pos| start + pos)
+}
+
+/// Parse an item header JSON from raw bytes.
 ///
-/// Envelope format:
-/// ```text
-/// {"event_id":"...","sent_at":"..."}
-/// {"type":"event","length":123}
-/// {"event_id":"...","exception":{...}}
-/// ```
+/// If the line is not valid JSON, returns a default (empty) header — callers
+/// should skip items with no type.
+fn parse_item_header(line: &[u8]) -> ItemHeader {
+    let text = match std::str::from_utf8(line) {
+        Ok(t) => t,
+        Err(_) => return ItemHeader::default(),
+    };
+    let value: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return ItemHeader::default(),
+    };
+    ItemHeader {
+        item_type: value.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        length: value.get("length").and_then(|v| v.as_u64()).map(|n| n as usize),
+        filename: value.get("filename").and_then(|v| v.as_str()).map(str::to_string),
+        content_type: value.get("content_type").and_then(|v| v.as_str()).map(str::to_string),
+        attachment_type: value.get("attachment_type").and_then(|v| v.as_str()).map(str::to_string),
+    }
+}
+
+// ── Binary-safe parser ────────────────────────────────────────────────────
+
+/// Parse a Sentry envelope from raw bytes (binary-safe).
 ///
-/// Also supports gzip-wrapped envelopes.
+/// This parser works on `&[u8]` rather than `&str` so that binary attachment
+/// payloads are not corrupted by newline splitting. Text items (event,
+/// transaction, session, sessions) are still parsed as UTF-8 JSON after
+/// newline-delimited extraction.
+fn parse_envelope_binary(data: &[u8]) -> Result<ParsedEnvelope> {
+    let mut result = ParsedEnvelope::default();
+    let mut pos = 0;
+
+    // --- Envelope header line (first \n) ---
+    let header_end = find_newline(data, pos).context("empty envelope: no newline found for envelope header")?;
+    // Skip the envelope header (we don't need it for parsing items).
+    pos = header_end + 1;
+
+    // --- Item loop ---
+    while pos < data.len() {
+        // Find the item header line (text ending with \n).
+        let header_end = match find_newline(data, pos) {
+            Some(end) => end,
+            None => break, // No more complete items.
+        };
+        let header_line = &data[pos..header_end];
+        let hdr = parse_item_header(header_line);
+        pos = header_end + 1; // Skip past the \n
+
+        // Skip items with no type.
+        if hdr.item_type.is_empty() {
+            // Fallback: might be a bare event JSON (2-line envelope).
+            if let Ok(text) = std::str::from_utf8(header_line) {
+                if let Ok(event) = serde_json::from_str::<Event>(text) {
+                    result.events.push(event);
+                }
+            }
+            continue;
+        }
+
+        if hdr.item_type == "attachment" {
+            // ── Binary attachment ──
+            let length = hdr.length.context("attachment item missing required 'length' field")?;
+
+            // Check we have enough data.
+            if pos + length > data.len() {
+                anyhow::bail!(
+                    "truncated attachment: declared {} bytes but only {} remaining",
+                    length,
+                    data.len() - pos
+                );
+            }
+
+            let attachment_data = data[pos..pos + length].to_vec();
+            pos += length;
+
+            // Skip one trailing \n if present (envelope items are \n-terminated).
+            if pos < data.len() && data[pos] == b'\n' {
+                pos += 1;
+            }
+
+            result.attachments.push(Attachment {
+                filename: hdr.filename.unwrap_or_default(),
+                content_type: hdr.content_type,
+                attachment_type: hdr.attachment_type,
+                data: attachment_data,
+            });
+        } else {
+            // ── Text item (event, transaction, session, sessions) ──
+            // Find the next \n to delimit the body.
+            let body_end = match find_newline(data, pos) {
+                Some(end) => end,
+                None => {
+                    // Last item with no trailing newline — use remaining bytes.
+                    data.len()
+                }
+            };
+            let body_bytes = &data[pos..body_end];
+            pos = if body_end < data.len() { body_end + 1 } else { body_end };
+
+            // If length is declared, honour it and advance past any extra
+            // bytes the newline scan would have missed.
+            if let Some(length) = hdr.length {
+                let declared_end = (body_end + 1).saturating_sub(body_bytes.len()) + length;
+                if declared_end <= data.len() {
+                    pos = declared_end;
+                }
+            }
+
+            let body_text = match std::str::from_utf8(body_bytes) {
+                Ok(t) => t,
+                Err(_) => continue, // Skip non-UTF-8 text items.
+            };
+
+            match hdr.item_type.as_str() {
+                "event" => {
+                    if let Ok(event) = serde_json::from_str::<Event>(body_text) {
+                        result.events.push(event);
+                    }
+                }
+                "transaction" => {
+                    if let Ok(txn) = serde_json::from_str::<Transaction>(body_text) {
+                        result.transactions.push(txn);
+                    }
+                }
+                "session" => {
+                    if let Ok(session) = serde_json::from_str::<SessionUpdate>(body_text) {
+                        result.session_updates.push(session);
+                    }
+                }
+                "sessions" => {
+                    if let Ok(aggregates) = serde_json::from_str::<SessionAggregates>(body_text) {
+                        result.session_aggregates.push(aggregates);
+                    }
+                }
+                _ => {} // Ignore unknown item types.
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+// ── Public entry point ────────────────────────────────────────────────────
+
+/// Parse a Sentry envelope body into individual events, transactions,
+/// sessions, and attachments.
+///
+/// Also supports gzip- and deflate-wrapped envelopes.
 pub fn parse_envelope(body: &[u8], content_encoding: Option<&str>) -> Result<ParsedEnvelope> {
     let decompressed = match content_encoding {
         Some("gzip") | Some("application/gzip") => decompress_gzip(body)?,
@@ -25,8 +184,8 @@ pub fn parse_envelope(body: &[u8], content_encoding: Option<&str>) -> Result<Par
         _ => body.to_vec(),
     };
 
-    let text = std::str::from_utf8(&decompressed).context("envelope is not valid UTF-8")?;
-    parse_envelope_text(text)
+    // Use binary parser for all envelopes (handles both text and binary items).
+    parse_envelope_binary(&decompressed)
 }
 
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
@@ -42,11 +201,17 @@ fn decompress_deflate(data: &[u8]) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+// ── Legacy text parser (kept for backward-compat in tests) ────────────────
+
 /// Parse the text envelope format.
 ///
 /// The envelope is a series of lines:
 /// Line 1: envelope header JSON (event_id, dsn, sent_at)
 /// Line 2+: item header JSON (type, length) followed by item body (JSON)
+///
+/// NOTE: This parser is NOT binary-safe — it splits on `\n` and therefore
+/// corrupts attachment payloads. Kept for backward-compat in tests only.
+#[allow(dead_code)]
 fn parse_envelope_text(text: &str) -> Result<ParsedEnvelope> {
     let mut result = ParsedEnvelope::default();
     let mut lines = text.lines();
@@ -118,6 +283,8 @@ pub fn extract_sentry_key(auth_header: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Existing text-based tests (backward compat) ──
 
     #[test]
     fn parse_plaintext_envelope_single_event() {
@@ -201,11 +368,6 @@ mod tests {
 
     #[test]
     fn extract_sentry_key_no_infinite_recursion() {
-        // "Sentry Sentry sentry_key=abc" must not stack-overflow (was infinite recursion before fix)
-        // After fix: strips first "Sentry " prefix once, then parses comma-separated key=value pairs
-        // "Sentry Sentry sentry_key=abc123" → strip_prefix → "Sentry sentry_key=abc123"
-        // split by comma → ["Sentry sentry_key=abc123"] — no "sentry_key=" prefix match
-        // This is correct behavior: malformed double-prefixed headers should fail
         let header = "Sentry sentry_key=abc123, sentry_version=7";
         let key = extract_sentry_key(header).unwrap();
         assert_eq!(key, "abc123");
@@ -225,7 +387,6 @@ mod tests {
 {"type":"event","length":50}
 {"event_id":"abc123","message":"gzipped","level":"error"}"#;
 
-        // Compress with gzip
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(original).unwrap();
         let compressed = encoder.finish().unwrap();
@@ -291,5 +452,226 @@ mod tests {
         assert!(result.events.is_empty());
         assert_eq!(result.transactions.len(), 1);
         assert_eq!(result.transactions[0].transaction, "GET /gzip-test");
+    }
+
+    // ── New binary-safe tests ──
+
+    /// Helper: build a raw envelope from parts.
+    fn build_envelope(parts: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for part in parts {
+            out.extend_from_slice(part);
+        }
+        out
+    }
+
+    #[test]
+    fn parse_envelope_with_attachment_and_event() {
+        let event_body = br#"{"event_id":"e1","message":"test error","level":"error"}"#;
+        let event_header = format!(r#"{{"type":"event","length":{}}}"#, event_body.len());
+
+        let attachment_data: &[u8] = b"hello\nworld\r\n\xff\x00binary";
+        let attachment_header = format!(
+            r#"{{"type":"attachment","length":{},"filename":"ss.png","content_type":"image/png"}}"#,
+            attachment_data.len()
+        );
+
+        let envelope = build_envelope(&[
+            b"{\"event_id\":\"e1\",\"sent_at\":\"2026-01-01T00:00:00Z\"}\n",
+            event_header.as_bytes(),
+            b"\n",
+            event_body,
+            b"\n",
+            attachment_header.as_bytes(),
+            b"\n",
+            attachment_data,
+            b"\n",
+        ]);
+
+        let result = parse_envelope_binary(&envelope).unwrap();
+        assert_eq!(result.events.len(), 1, "should have 1 event");
+        assert_eq!(result.attachments.len(), 1, "should have 1 attachment");
+        assert_eq!(result.events[0].event_id, "e1");
+        assert_eq!(result.attachments[0].data, attachment_data);
+        assert_eq!(result.attachments[0].filename, "ss.png");
+        assert_eq!(result.attachments[0].content_type.as_deref(), Some("image/png"));
+    }
+
+    #[test]
+    fn parse_envelope_binary_data_with_newlines() {
+        let attachment_data: &[u8] = b"hello\nworld\r\n\xff\x00binary";
+        let attachment_header =
+            format!(r#"{{"type":"attachment","length":{},"filename":"debug.log"}}"#, attachment_data.len());
+
+        let envelope = build_envelope(&[
+            b"{\"event_id\":\"e1\",\"sent_at\":\"2026-01-01T00:00:00Z\"}\n",
+            attachment_header.as_bytes(),
+            b"\n",
+            attachment_data,
+            b"\n",
+        ]);
+
+        let result = parse_envelope_binary(&envelope).unwrap();
+        assert_eq!(result.attachments.len(), 1);
+        assert_eq!(result.attachments[0].data, attachment_data);
+        // The key assertion: the data contains embedded newlines and null bytes
+        // and round-trips correctly (not corrupted by newline splitting).
+        assert_eq!(result.attachments[0].data.len(), 21);
+        assert_eq!(&result.attachments[0].data[5..13], b"\nworld\r\n");
+        assert_eq!(result.attachments[0].data[13], 0xff);
+        assert_eq!(result.attachments[0].data[14], 0x00);
+    }
+
+    #[test]
+    fn parse_envelope_attachment_only() {
+        let attachment_data: &[u8] = b"\x89PNG\r\n\x1a\nfake-png-data";
+        let attachment_header = format!(
+            r#"{{"type":"attachment","length":{},"filename":"screenshot.png","content_type":"image/png","attachment_type":"event.attachment"}}"#,
+            attachment_data.len()
+        );
+
+        let envelope = build_envelope(&[
+            b"{\"event_id\":\"e1\",\"sent_at\":\"2026-01-01T00:00:00Z\"}\n",
+            attachment_header.as_bytes(),
+            b"\n",
+            attachment_data,
+            b"\n",
+        ]);
+
+        let result = parse_envelope_binary(&envelope).unwrap();
+        assert!(result.events.is_empty(), "should have no events");
+        assert_eq!(result.attachments.len(), 1);
+        assert_eq!(result.attachments[0].data, attachment_data);
+        assert_eq!(result.attachments[0].filename, "screenshot.png");
+        assert_eq!(result.attachments[0].attachment_type.as_deref(), Some("event.attachment"));
+    }
+
+    #[test]
+    fn parse_envelope_no_attachments_backward_compat() {
+        // Standard text-only envelope (event + transaction)
+        let envelope = br#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"event","length":50}
+{"event_id":"e1","message":"error here","level":"error"}
+{"type":"transaction","length":150}
+{"event_id":"e2","level":"info","transaction":"POST /api/submit","start_timestamp":1.0,"timestamp":2.0}"#;
+
+        let result_text = parse_envelope_text(std::str::from_utf8(envelope).unwrap()).unwrap();
+        let result_binary = parse_envelope_binary(envelope).unwrap();
+
+        // Events should match
+        assert_eq!(result_binary.events.len(), result_text.events.len());
+        assert_eq!(result_binary.events.len(), 1);
+        assert_eq!(result_binary.events[0].message, result_text.events[0].message);
+
+        // Transactions should match
+        assert_eq!(result_binary.transactions.len(), result_text.transactions.len());
+        assert_eq!(result_binary.transactions.len(), 1);
+        assert_eq!(result_binary.transactions[0].transaction, result_text.transactions[0].transaction);
+
+        // No attachments from either parser
+        assert!(result_text.attachments.is_empty());
+        assert!(result_binary.attachments.is_empty());
+    }
+
+    #[test]
+    fn parse_envelope_truncated_attachment() {
+        // Attachment declares length=100 but only provides 10 bytes
+        let attachment_header = r#"{"type":"attachment","length":100,"filename":"big.bin"}"#;
+        let short_data = b"only10byte";
+
+        let envelope = build_envelope(&[
+            b"{\"event_id\":\"e1\",\"sent_at\":\"2026-01-01T00:00:00Z\"}\n",
+            attachment_header.as_bytes(),
+            b"\n",
+            short_data,
+        ]);
+
+        let result = parse_envelope_binary(&envelope);
+        assert!(result.is_err(), "truncated attachment should return error");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("truncated attachment"), "error should mention truncated attachment, got: {err}");
+    }
+
+    #[test]
+    fn parse_envelope_multiple_attachments() {
+        let att1_data: &[u8] = b"first attachment\nwith newline";
+        let att1_header = format!(
+            r#"{{"type":"attachment","length":{},"filename":"a1.txt","content_type":"text/plain"}}"#,
+            att1_data.len()
+        );
+        let att2_data: &[u8] = b"\x89PNG\r\n\x1a\nfake";
+        let att2_header = format!(
+            r#"{{"type":"attachment","length":{},"filename":"a2.png","content_type":"image/png"}}"#,
+            att2_data.len()
+        );
+
+        let envelope = build_envelope(&[
+            b"{\"event_id\":\"e1\",\"sent_at\":\"2026-01-01T00:00:00Z\"}\n",
+            att1_header.as_bytes(),
+            b"\n",
+            att1_data,
+            b"\n",
+            att2_header.as_bytes(),
+            b"\n",
+            att2_data,
+            b"\n",
+        ]);
+
+        let result = parse_envelope_binary(&envelope).unwrap();
+        assert_eq!(result.attachments.len(), 2, "should have 2 attachments");
+        assert_eq!(result.attachments[0].data, att1_data);
+        assert_eq!(result.attachments[0].filename, "a1.txt");
+        assert_eq!(result.attachments[1].data, att2_data);
+        assert_eq!(result.attachments[1].filename, "a2.png");
+    }
+
+    #[test]
+    fn parse_gzip_envelope_with_attachment() {
+        use std::io::Write;
+
+        let event_body = br#"{"event_id":"e1","message":"gzipped","level":"error"}"#;
+        let event_header = format!(r#"{{"type":"event","length":{}}}"#, event_body.len());
+        let attachment_data: &[u8] = b"\x89PNG\r\n\x1a\nFAKE";
+        let attachment_header = format!(
+            r#"{{"type":"attachment","length":{},"filename":"img.png","content_type":"image/png"}}"#,
+            attachment_data.len()
+        );
+
+        let raw_envelope = build_envelope(&[
+            b"{\"event_id\":\"e1\",\"sent_at\":\"2026-01-01T00:00:00Z\"}\n",
+            event_header.as_bytes(),
+            b"\n",
+            event_body,
+            b"\n",
+            attachment_header.as_bytes(),
+            b"\n",
+            attachment_data,
+            b"\n",
+        ]);
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&raw_envelope).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let result = parse_envelope(&compressed, Some("gzip")).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].message.as_deref(), Some("gzipped"));
+        assert_eq!(result.attachments.len(), 1);
+        assert_eq!(result.attachments[0].data, attachment_data);
+        assert_eq!(result.attachments[0].filename, "img.png");
+    }
+
+    // ── parse_envelope() uses binary parser for text-only envelopes ──
+
+    #[test]
+    fn parse_envelope_entry_point_no_encoding() {
+        let envelope = br#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"event","length":50}
+{"event_id":"e1","message":"via entry point","level":"error"}"#;
+
+        let result = parse_envelope(envelope, None).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].message.as_deref(), Some("via entry point"));
+        assert!(result.attachments.is_empty());
     }
 }
