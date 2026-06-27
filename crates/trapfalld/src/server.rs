@@ -280,9 +280,9 @@ async fn ingest_envelope(
     tracing::info!("Encoding: {:?}", encoding);
 
     // Parse envelope
-    let events = match parse_envelope(&body, encoding) {
+    let parsed = match parse_envelope(&body, encoding) {
         Ok(e) => {
-            tracing::info!("Parsed {} events", e.len());
+            tracing::info!("Parsed {} events, {} transactions", e.events.len(), e.transactions.len());
             e
         }
         Err(e) => {
@@ -290,13 +290,18 @@ async fn ingest_envelope(
             return StatusCode::BAD_REQUEST;
         }
     };
+    // TODO(#237): Persist transactions — for now, acknowledge and log.
+    // Transaction-only envelopes return 200 OK but data is not yet stored.
+    if !parsed.transactions.is_empty() {
+        tracing::info!("Skipping {} transactions (not yet persisted, see #237)", parsed.transactions.len());
+    }
 
-    if events.is_empty() {
+    if parsed.events.is_empty() && parsed.transactions.is_empty() {
         return StatusCode::OK;
     }
 
     let mut accepted = 0;
-    for event in events {
+    for event in parsed.events {
         let fingerprint = trapfall_core::derive_fingerprint(&event);
         let ingest_event = IngestEvent {
             project_id: project.id.clone(),

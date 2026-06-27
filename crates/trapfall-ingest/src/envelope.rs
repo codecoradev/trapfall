@@ -6,9 +6,9 @@
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::io::Read;
-use trapfall_proto::Event;
+use trapfall_proto::{Event, ParsedEnvelope, Transaction};
 
-/// Parse a Sentry envelope body into individual events.
+/// Parse a Sentry envelope body into individual events and transactions.
 ///
 /// Envelope format:
 /// ```text
@@ -18,7 +18,7 @@ use trapfall_proto::Event;
 /// ```
 ///
 /// Also supports gzip-wrapped envelopes.
-pub fn parse_envelope(body: &[u8], content_encoding: Option<&str>) -> Result<Vec<Event>> {
+pub fn parse_envelope(body: &[u8], content_encoding: Option<&str>) -> Result<ParsedEnvelope> {
     let decompressed = match content_encoding {
         Some("gzip") | Some("application/gzip") => decompress_gzip(body)?,
         Some("deflate") => decompress_deflate(body)?,
@@ -47,8 +47,8 @@ fn decompress_deflate(data: &[u8]) -> Result<Vec<u8>> {
 /// The envelope is a series of lines:
 /// Line 1: envelope header JSON (event_id, dsn, sent_at)
 /// Line 2+: item header JSON (type, length) followed by item body (JSON)
-fn parse_envelope_text(text: &str) -> Result<Vec<Event>> {
-    let mut events = Vec::new();
+fn parse_envelope_text(text: &str) -> Result<ParsedEnvelope> {
+    let mut result = ParsedEnvelope::default();
     let mut lines = text.lines();
 
     // First line is the envelope header — skip it
@@ -70,7 +70,7 @@ fn parse_envelope_text(text: &str) -> Result<Vec<Event>> {
         // If no type field, this might be a bare event (2-line envelope: header + event)
         if item_type.is_empty() && item_header.get("event_id").is_some() {
             if let Ok(event) = serde_json::from_value::<Event>(item_header) {
-                events.push(event);
+                result.events.push(event);
             }
             continue;
         }
@@ -82,13 +82,17 @@ fn parse_envelope_text(text: &str) -> Result<Vec<Event>> {
 
         if item_type == "event" {
             if let Ok(event) = serde_json::from_str::<Event>(body_line) {
-                events.push(event);
+                result.events.push(event);
+            }
+        } else if item_type == "transaction" {
+            if let Ok(txn) = serde_json::from_str::<Transaction>(body_line) {
+                result.transactions.push(txn);
             }
         }
         // Ignore other item types (attachments, sessions, etc.)
     }
 
-    Ok(events)
+    Ok(result)
 }
 
 /// Extract the Sentry auth key from the X-Sentry-Auth header.
@@ -113,10 +117,10 @@ mod tests {
 {"type":"event","length":50}
 {"event_id":"abc123","message":"hello","level":"error"}"#;
 
-        let events = parse_envelope_text(envelope).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_id, "abc123");
-        assert_eq!(events[0].message.as_deref(), Some("hello"));
+        let result = parse_envelope_text(envelope).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_id, "abc123");
+        assert_eq!(result.events[0].message.as_deref(), Some("hello"));
     }
 
     #[test]
@@ -127,9 +131,9 @@ mod tests {
 {"type":"event","length":50}
 {"event_id":"abc123","message":"error","level":"error"}"#;
 
-        let events = parse_envelope_text(envelope).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_id, "abc123");
+        let result = parse_envelope_text(envelope).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_id, "abc123");
     }
 
     #[test]
@@ -141,8 +145,8 @@ mod tests {
     #[test]
     fn parse_header_only_envelope() {
         let envelope = r#"{"event_id":"abc123","sent_at":"2026-01-01T00:00:00Z"}"#;
-        let events = parse_envelope_text(envelope).unwrap();
-        assert!(events.is_empty());
+        let result = parse_envelope_text(envelope).unwrap();
+        assert!(result.events.is_empty());
     }
 
     #[test]
@@ -189,8 +193,66 @@ mod tests {
         encoder.write_all(original).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        let events = parse_envelope(&compressed, Some("gzip")).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].message.as_deref(), Some("gzipped"));
+        let result = parse_envelope(&compressed, Some("gzip")).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].message.as_deref(), Some("gzipped"));
+    }
+
+    #[test]
+    fn parse_envelope_transaction_only() {
+        let envelope = r#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"transaction","length":150}
+{"event_id":"e1","level":"info","transaction":"GET /api/health","start_timestamp":1703894474.296,"timestamp":1703894474.891}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert!(result.events.is_empty());
+        assert_eq!(result.transactions.len(), 1);
+        assert_eq!(result.transactions[0].transaction, "GET /api/health");
+    }
+
+    #[test]
+    fn parse_envelope_event_and_transaction() {
+        let envelope = r#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"event","length":50}
+{"event_id":"e1","message":"error here","level":"error"}
+{"type":"transaction","length":150}
+{"event_id":"e2","level":"info","transaction":"POST /api/submit","start_timestamp":1.0,"timestamp":2.0}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.transactions.len(), 1);
+        assert_eq!(result.events[0].message.as_deref(), Some("error here"));
+        assert_eq!(result.transactions[0].transaction, "POST /api/submit");
+    }
+
+    #[test]
+    fn parse_envelope_malformed_transaction_skipped() {
+        let envelope = r#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"transaction","length":50}
+{invalid json here}
+{"type":"event","length":50}
+{"event_id":"e2","message":"still works","level":"error"}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert!(result.transactions.is_empty(), "malformed transaction should be skipped");
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].message.as_deref(), Some("still works"));
+    }
+
+    #[test]
+    fn parse_gzip_envelope_with_transaction() {
+        use std::io::Write;
+        let original = br#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"transaction","length":150}
+{"event_id":"e1","level":"info","transaction":"GET /gzip-test","start_timestamp":1703894474.296,"timestamp":1703894474.891}"#;
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let result = parse_envelope(&compressed, Some("gzip")).unwrap();
+        assert!(result.events.is_empty());
+        assert_eq!(result.transactions.len(), 1);
+        assert_eq!(result.transactions[0].transaction, "GET /gzip-test");
     }
 }
