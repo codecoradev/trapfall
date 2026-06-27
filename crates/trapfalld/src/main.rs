@@ -120,7 +120,16 @@ async fn main() -> Result<()> {
     }
 
     // Normal commands: open global database.
-    let db_url = trapfall_db::normalise_url(&cli.db);
+    // If user didn't explicitly set --db or TRAPFALL_DATABASE_URL, use
+    // the standardised data directory (~/.codecora/trapfall/).
+    let db_str = if cli.db == "trapfall.db" {
+        let dir = Config::default_data_dir();
+        Config::ensure_data_dir(&dir).expect("failed to create data directory");
+        Config::default_db_path()
+    } else {
+        cli.db.clone()
+    };
+    let db_url = trapfall_db::normalise_url(&db_str);
     info!("Opening database: {db_url}");
     let backend = trapfall_db::open_database(&db_url).await?;
     // Run idempotent schema migrations for whichever backend we got back.
