@@ -436,6 +436,134 @@ impl Database for PostgresBackend {
         Ok(count)
     }
 
+    // ── Release Health ────────────────────────────────────────────────
+
+    async fn insert_release_health(
+        &self,
+        project_id: &str,
+        aggregates: &trapfall_proto::SessionAggregates,
+    ) -> Result<usize> {
+        let now = now_rfc3339();
+        let mut count = 0usize;
+
+        for item in &aggregates.aggregates {
+            let id = new_id();
+            sqlx::query(
+                "INSERT INTO release_health (id, project_id, release, environment, started_at, distinct_id, exited, errored, abnormal, crashed, received_at)                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            )
+            .bind(&id)
+            .bind(project_id)
+            .bind(&aggregates.attributes.release)
+            .bind(&aggregates.attributes.environment)
+            .bind(&item.started)
+            .bind(&item.distinct_id)
+            .bind(item.exited as i64)
+            .bind(item.errored as i64)
+            .bind(item.abnormal as i64)
+            .bind(item.crashed as i64)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
+    async fn get_crash_rate(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<Option<f64>> {
+        let row: Option<(i64, i64)> = if release.is_some() || env.is_some() {
+            let mut sql = String::from(
+                "SELECT SUM(crashed), SUM(exited + errored + abnormal + crashed)                  FROM release_health WHERE project_id = $1",
+            );
+            let mut idx = 2usize;
+            if release.is_some() {
+                sql.push_str(&format!(" AND release = ${idx}"));
+                idx += 1;
+            }
+            if env.is_some() {
+                sql.push_str(&format!(" AND environment = ${idx}"));
+            }
+            let mut q = sqlx::query_as::<_, (i64, i64)>(&sql).bind(project_id);
+            if let Some(r) = release {
+                q = q.bind(r);
+            }
+            if let Some(e) = env {
+                q = q.bind(e);
+            }
+            q.fetch_optional(&self.pool).await?
+        } else {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT SUM(crashed), SUM(exited + errored + abnormal + crashed)                  FROM release_health WHERE project_id = $1",
+            )
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?
+        };
+
+        match row {
+            Some((crashed, total)) if total > 0 => Ok(Some((crashed as f64 / total as f64) * 100.0)),
+            _ => Ok(None),
+        }
+    }
+
+    async fn list_release_health(
+        &self,
+        project_id: &str,
+        release: Option<&str>,
+        env: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::common::ReleaseHealthRow>> {
+        let mut sql = String::from(
+            "SELECT id, project_id, release, environment, started_at, distinct_id, exited, errored, abnormal, crashed, received_at              FROM release_health WHERE project_id = $1",
+        );
+        let mut idx = 2usize;
+        if let Some(_r) = release {
+            sql.push_str(&format!(" AND release = ${idx}"));
+            idx += 1;
+        }
+        if let Some(_e) = env {
+            sql.push_str(&format!(" AND environment = ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(&format!(" ORDER BY received_at DESC LIMIT ${idx} OFFSET ${}", idx + 1));
+
+        let mut q = sqlx::query_as::<_, crate::common::ReleaseHealthRow>(&sql).bind(project_id);
+        if let Some(r) = release {
+            q = q.bind(r);
+        }
+        if let Some(e) = env {
+            q = q.bind(e);
+        }
+        q = q.bind(limit).bind(offset);
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
+    async fn count_release_health(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM release_health WHERE project_id = $1");
+        let mut idx = 2usize;
+        if let Some(_r) = release {
+            sql.push_str(&format!(" AND release = ${idx}"));
+            idx += 1;
+        }
+        if let Some(_e) = env {
+            sql.push_str(&format!(" AND environment = ${idx}"));
+        }
+
+        let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(project_id);
+        if let Some(r) = release {
+            q = q.bind(r);
+        }
+        if let Some(e) = env {
+            q = q.bind(e);
+        }
+
+        let count = q.fetch_one(&self.pool).await?;
+        Ok(count)
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(

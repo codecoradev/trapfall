@@ -440,6 +440,120 @@ impl Database for SqliteBackend {
         Ok(count)
     }
 
+    // ── Release Health ────────────────────────────────────────────────
+
+    async fn insert_release_health(
+        &self,
+        project_id: &str,
+        aggregates: &trapfall_proto::SessionAggregates,
+    ) -> Result<usize> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut count = 0usize;
+
+        for item in &aggregates.aggregates {
+            let id = new_id();
+            sqlx::query(
+                "INSERT INTO release_health (id, project_id, release, environment, started_at, distinct_id, exited, errored, abnormal, crashed, received_at)                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(project_id)
+            .bind(&aggregates.attributes.release)
+            .bind(&aggregates.attributes.environment)
+            .bind(&item.started)
+            .bind(&item.distinct_id)
+            .bind(item.exited as i64)
+            .bind(item.errored as i64)
+            .bind(item.abnormal as i64)
+            .bind(item.crashed as i64)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
+    async fn get_crash_rate(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<Option<f64>> {
+        let mut sql = String::from(
+            "SELECT SUM(crashed), SUM(exited + errored + abnormal + crashed)              FROM release_health WHERE project_id = ?",
+        );
+        if release.is_some() {
+            sql.push_str(" AND release = ?");
+        }
+        if env.is_some() {
+            sql.push_str(" AND environment = ?");
+        }
+
+        let mut q = sqlx::query_as::<_, (i64, i64)>(&sql).bind(project_id);
+        if let Some(r) = release {
+            q = q.bind(r);
+        }
+        if let Some(e) = env {
+            q = q.bind(e);
+        }
+
+        let row = q.fetch_optional(&self.pool).await?;
+
+        match row {
+            Some((crashed, total)) if total > 0 => Ok(Some((crashed as f64 / total as f64) * 100.0)),
+            _ => Ok(None),
+        }
+    }
+
+    async fn list_release_health(
+        &self,
+        project_id: &str,
+        release: Option<&str>,
+        env: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::common::ReleaseHealthRow>> {
+        let mut sql = String::from(
+            "SELECT id, project_id, release, environment, started_at, distinct_id, exited, errored, abnormal, crashed, received_at              FROM release_health WHERE project_id = ?",
+        );
+        if release.is_some() {
+            sql.push_str(" AND release = ?");
+        }
+        if env.is_some() {
+            sql.push_str(" AND environment = ?");
+        }
+        sql.push_str(" ORDER BY received_at DESC LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query_as::<_, crate::common::ReleaseHealthRow>(&sql).bind(project_id);
+        if let Some(r) = release {
+            q = q.bind(r);
+        }
+        if let Some(e) = env {
+            q = q.bind(e);
+        }
+        q = q.bind(limit).bind(offset);
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
+    async fn count_release_health(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM release_health WHERE project_id = ?");
+        if release.is_some() {
+            sql.push_str(" AND release = ?");
+        }
+        if env.is_some() {
+            sql.push_str(" AND environment = ?");
+        }
+
+        let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(project_id);
+        if let Some(r) = release {
+            q = q.bind(r);
+        }
+        if let Some(e) = env {
+            q = q.bind(e);
+        }
+
+        let count = q.fetch_one(&self.pool).await?;
+        Ok(count)
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(
@@ -904,6 +1018,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../trapfalld/migrations/20260627000001_release_health.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         SqliteBackend::new(pool)
     }
 
@@ -1251,5 +1369,132 @@ mod tests {
         let db = open_backend().await;
         let result = db.get_transaction("nonexistent").await.unwrap();
         assert!(result.is_none());
+    }
+
+    // ── Release Health tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_insert_and_query_release_health() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        let aggregates = trapfall_proto::SessionAggregates {
+            aggregates: vec![
+                trapfall_proto::SessionAggregateItem {
+                    started: "2026-01-01T00:00:00Z".into(),
+                    distinct_id: Some("user1".into()),
+                    exited: 90,
+                    errored: 5,
+                    abnormal: 2,
+                    crashed: 3,
+                },
+                trapfall_proto::SessionAggregateItem {
+                    started: "2026-01-02T00:00:00Z".into(),
+                    distinct_id: None,
+                    exited: 50,
+                    errored: 1,
+                    abnormal: 0,
+                    crashed: 0,
+                },
+            ],
+            attributes: trapfall_proto::SessionAttributes {
+                release: "1.0.0".into(),
+                environment: Some("production".into()),
+                ip_address: None,
+                user_agent: None,
+            },
+        };
+
+        let count = db.insert_release_health(&project.id, &aggregates).await.unwrap();
+        assert_eq!(count, 2);
+
+        let rows = db.list_release_health(&project.id, Some("1.0.0"), Some("production"), 10, 0).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].release, "1.0.0");
+        assert_eq!(rows[0].environment.as_deref(), Some("production"));
+
+        let total = db.count_release_health(&project.id, None, None).await.unwrap();
+        assert_eq!(total, 2);
+
+        let filtered = db.count_release_health(&project.id, Some("1.0.0"), Some("production")).await.unwrap();
+        assert_eq!(filtered, 2);
+
+        // Filter for non-existent release
+        let none = db.count_release_health(&project.id, Some("2.0.0"), None).await.unwrap();
+        assert_eq!(none, 0);
+    }
+
+    #[tokio::test]
+    async fn test_crash_rate_calculation() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        let aggregates = trapfall_proto::SessionAggregates {
+            aggregates: vec![trapfall_proto::SessionAggregateItem {
+                started: "2026-01-01T00:00:00Z".into(),
+                distinct_id: None,
+                exited: 90,
+                errored: 5,
+                abnormal: 2,
+                crashed: 3,
+            }],
+            attributes: trapfall_proto::SessionAttributes {
+                release: "1.0.0".into(),
+                environment: None,
+                ip_address: None,
+                user_agent: None,
+            },
+        };
+
+        db.insert_release_health(&project.id, &aggregates).await.unwrap();
+
+        // crash_rate = 3 / (90+5+2+3) * 100 = 3.0
+        let rate = db.get_crash_rate(&project.id, None, None).await.unwrap().unwrap();
+        assert!((rate - 3.0).abs() < 0.01, "expected ~3.0, got {rate}");
+
+        // No data for a different project should return None
+        let none = db.get_crash_rate("nonexistent", None, None).await.unwrap();
+        assert!(none.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_release_health_pagination() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        for i in 0..5 {
+            let aggregates = trapfall_proto::SessionAggregates {
+                aggregates: vec![trapfall_proto::SessionAggregateItem {
+                    started: format!("2026-01-{:02}T00:00:00Z", i + 1),
+                    distinct_id: None,
+                    exited: 10,
+                    errored: 0,
+                    abnormal: 0,
+                    crashed: 0,
+                }],
+                attributes: trapfall_proto::SessionAttributes {
+                    release: "1.0.0".into(),
+                    environment: Some("production".into()),
+                    ip_address: None,
+                    user_agent: None,
+                },
+            };
+            db.insert_release_health(&project.id, &aggregates).await.unwrap();
+        }
+
+        let page1 = db.list_release_health(&project.id, None, None, 2, 0).await.unwrap();
+        assert_eq!(page1.len(), 2);
+
+        let page2 = db.list_release_health(&project.id, None, None, 2, 2).await.unwrap();
+        assert_eq!(page2.len(), 2);
+
+        let page3 = db.list_release_health(&project.id, None, None, 2, 4).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let beyond = db.list_release_health(&project.id, None, None, 2, 5).await.unwrap();
+        assert!(beyond.is_empty());
     }
 }

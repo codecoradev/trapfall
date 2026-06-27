@@ -144,6 +144,7 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
         sqlx::query("ALTER TABLE projects ADD COLUMN archived_at TEXT DEFAULT NULL").execute(pool).await?;
     }
     sqlx::query(include_str!("../../trapfalld/migrations/20260613000001_transactions.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260627000001_release_health.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -165,6 +166,7 @@ pub async fn run_postgres_migrations(pool: &sqlx::PgPool) -> Result<()> {
     sqlx::query(include_str!("../migrations/postgres/001_initial.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/002_alert_rules.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/003_transactions.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../migrations/postgres/004_release_health.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -235,6 +237,24 @@ pub trait Database: Send + Sync {
         transaction_id: &str,
     ) -> Result<Option<(crate::common::TransactionRow, Vec<crate::common::SpanRow>)>>;
     async fn count_transactions(&self, project_id: &str) -> Result<i64>;
+
+    // ── Release Health ────────────────────────────────────────────────
+
+    async fn insert_release_health(
+        &self,
+        project_id: &str,
+        aggregates: &trapfall_proto::SessionAggregates,
+    ) -> Result<usize>;
+    async fn get_crash_rate(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<Option<f64>>;
+    async fn list_release_health(
+        &self,
+        project_id: &str,
+        release: Option<&str>,
+        env: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::common::ReleaseHealthRow>>;
+    async fn count_release_health(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<i64>;
 
     // ── Alert Rules ────────────────────────────────────────────────────
 
