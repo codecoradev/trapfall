@@ -147,6 +147,38 @@ impl From<SessionRow> for crate::StoredSession {
     }
 }
 
+// ── Transaction + Span row types ─────────────────────────────────────
+
+/// Stored transaction row.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TransactionRow {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub release: Option<String>,
+    pub environment: Option<String>,
+    pub duration_ms: f64,
+    pub status: String,
+    pub data: String,
+    pub received_at: String,
+}
+
+/// Stored span row.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SpanRow {
+    pub id: String,
+    pub transaction_id: String,
+    pub span_id: String,
+    pub trace_id: String,
+    pub parent_span_id: Option<String>,
+    pub op: Option<String>,
+    pub description: Option<String>,
+    pub start_offset_ms: f64,
+    pub duration_ms: f64,
+    pub status: Option<String>,
+    pub data: String,
+}
+
 // ── Shared helpers ───────────────────────────────────────────────────
 
 /// Generate a new UUID v4 string.
@@ -223,6 +255,28 @@ pub fn str_to_status(s: &str) -> IssueStatus {
         "regression" => IssueStatus::Regression,
         _ => IssueStatus::Unresolved,
     }
+}
+
+pub fn span_status_to_str(status: trapfall_proto::SpanStatus) -> String {
+    match status {
+        trapfall_proto::SpanStatus::Ok => "ok",
+        trapfall_proto::SpanStatus::DeadlineExceeded => "deadline_exceeded",
+        trapfall_proto::SpanStatus::Cancelled => "cancelled",
+        trapfall_proto::SpanStatus::UnknownError => "unknown_error",
+        trapfall_proto::SpanStatus::InternalError => "internal_error",
+        trapfall_proto::SpanStatus::ResourceExhausted => "resource_exhausted",
+        trapfall_proto::SpanStatus::Unauthenticated => "unauthenticated",
+        trapfall_proto::SpanStatus::Unavailable => "unavailable",
+        trapfall_proto::SpanStatus::AlreadyExists => "already_exists",
+        trapfall_proto::SpanStatus::PermissionDenied => "permission_denied",
+        trapfall_proto::SpanStatus::NotFound => "not_found",
+        trapfall_proto::SpanStatus::FailedPrecondition => "failed_precondition",
+        trapfall_proto::SpanStatus::Aborted => "aborted",
+        trapfall_proto::SpanStatus::OutOfRange => "out_of_range",
+        trapfall_proto::SpanStatus::Unimplemented => "unimplemented",
+        trapfall_proto::SpanStatus::DataLoss => "data_loss",
+    }
+    .to_string()
 }
 
 /// Parse a level string from a serde_json Value (used in dynamic search queries).

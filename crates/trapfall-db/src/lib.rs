@@ -143,6 +143,7 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     if !has_archived_at {
         sqlx::query("ALTER TABLE projects ADD COLUMN archived_at TEXT DEFAULT NULL").execute(pool).await?;
     }
+    sqlx::query(include_str!("../../trapfalld/migrations/20260613000001_transactions.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -163,6 +164,7 @@ async fn open_postgres_pool(url: &str) -> Result<sqlx::PgPool> {
 pub async fn run_postgres_migrations(pool: &sqlx::PgPool) -> Result<()> {
     sqlx::query(include_str!("../migrations/postgres/001_initial.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/002_alert_rules.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../migrations/postgres/003_transactions.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -218,6 +220,21 @@ pub trait Database: Send + Sync {
     async fn insert_event(&self, issue_id: &str, project_id: &str, event_data: &str) -> Result<String>;
     async fn list_events(&self, issue_id: &str, limit: i64, offset: i64) -> Result<Vec<StoredEvent>>;
     async fn count_events(&self, issue_id: &str) -> Result<i64>;
+
+    // ── Transactions ──────────────────────────────────────────────────────
+
+    async fn insert_transaction(&self, project_id: &str, transaction: &trapfall_proto::Transaction) -> Result<String>;
+    async fn list_transactions(
+        &self,
+        project_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::common::TransactionRow>>;
+    async fn get_transaction(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<(crate::common::TransactionRow, Vec<crate::common::SpanRow>)>>;
+    async fn count_transactions(&self, project_id: &str) -> Result<i64>;
 
     // ── Alert Rules ────────────────────────────────────────────────────
 
