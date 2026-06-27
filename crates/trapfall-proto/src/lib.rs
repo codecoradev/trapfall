@@ -184,6 +184,7 @@ pub enum ServerMessage {
     IssueCreated { issue: Issue },
     IssueUpdated { issue: Issue },
     EventReceived { issue_id: String, event_id: String },
+    TransactionReceived { transaction_id: String, name: String, duration_ms: f64 },
 }
 
 /// Messages from WebSocket client (minimal for now).
@@ -453,6 +454,25 @@ mod tests {
         match back {
             ServerMessage::IssueCreated { issue } => {
                 assert_eq!(issue.id, "i1");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+    #[test]
+    fn serde_transaction_received() {
+        let msg = ServerMessage::TransactionReceived {
+            transaction_id: "tx1".into(),
+            name: "GET /api/health".into(),
+            duration_ms: 595.0,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"TransactionReceived""#));
+        let back: ServerMessage = serde_json::from_str(&json).unwrap();
+        match back {
+            ServerMessage::TransactionReceived { transaction_id, name, duration_ms } => {
+                assert_eq!(transaction_id, "tx1");
+                assert_eq!(name, "GET /api/health");
+                assert_eq!(duration_ms, 595.0);
             }
             _ => panic!("wrong variant"),
         }
