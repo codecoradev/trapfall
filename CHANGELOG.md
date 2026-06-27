@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-27
+
+### Added — Phase 1: Transaction (Performance Tracing)
+
+- **Transaction + Span wire types** (#235): `Transaction`, `Span`,
+  `SpanStatus` proto types with JSON parsing and envelope item encoding.
+- **Transaction envelope parser** (#236): extracts transaction items from
+  Sentry envelopes, including nested span arrays and duration fields.
+- **Transactions + transaction_spans DB tables** (#237): full schema with
+  queries for listing, filtering by project/release, and detail retrieval
+  (SQLite + Postgres).
+- **Transaction ingest handler** (#238): processes incoming transactions,
+  persists to DB, and broadcasts via WebSocket for real-time dashboard updates.
+- **Performance dashboard tab** (#239): transaction list with filters,
+  detail view, and waterfall chart for span visualization.
+
+### Added — Phase 2: Session (Release Health)
+
+- **Session wire types** (#240): `SessionStatus`, `SessionUpdate`,
+  `SessionAggregates` proto types with JSON parsing.
+- **Session envelope parser** (#241): parses `session` and `sessions`
+  item types from Sentry envelopes, including aggregate session data.
+- **Release health DB table** (#242): stores session data with queries for
+  crash rate calculation, release comparison, and time-series aggregation.
+- **Release health dashboard** (#243): dedicated UI tab showing crash-free
+  rates, session counts, and release-level health metrics.
+
+### Added — Phase 3: Attachment (Binary Upload)
+
+- **Attachment wire type** (#244): `Attachment` proto type with filename,
+  size, content_type, and SHA1 hash fields.
+- **Binary-safe envelope parser** (#245): handles base64-encoded binary
+  attachments in envelope items, validates magic bytes, and decodes content.
+- **Attachments table + disk storage** (#246): database schema with
+  metadata tracking, filesystem storage with size limits, and CRUD queries.
+- **Attachment API + event detail UI** (#247): `GET /api/attachments/{id}`
+  endpoint, attachment viewer in event detail page.
+
+### Fixed
+
+- **quinn-proto RUSTSEC-2026-0185** (#254): bumped `quinn-proto`
+  0.11.14 → 0.11.15 to resolve medium-severity advisory.
+- **Cora review config** (#254): switched to `freemodel` (gpt-5.4) as
+  default Cora provider.
+
+### Changed
+
+- Proto layer extended with Transaction, Span, and Session types —
+  `ParsedEnvelope` now supports 5 envelope item types (event, transaction,
+  session, sessions, attachment).
+- WebSocket broadcasts now include transaction events alongside error events.
+
 ## [0.1.4] - 2026-06-19
 
 ### Added
@@ -262,7 +314,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 24 audit findings addressed across 6 batch PRs (#121–#126)
 
-[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.1.2...develop
+[unreleased]: https://github.com/codecoradev/trapfall/compare/v0.2.0...develop
+[0.2.0]: https://github.com/codecoradev/trapfall/compare/v0.1.4...v0.2.0
+[0.1.4]: https://github.com/codecoradev/trapfall/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/codecoradev/trapfall/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/codecoradev/trapfall/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/codecoradev/trapfall/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/codecoradev/trapfall/compare/v0.0.5...v0.1.0
