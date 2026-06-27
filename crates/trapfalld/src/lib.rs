@@ -1,6 +1,7 @@
 //! trapfalld library — shared between binary and integration tests.
 
 pub mod alert;
+pub mod attachment_storage;
 pub mod auth;
 pub mod config;
 pub mod digest;

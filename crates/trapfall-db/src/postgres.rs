@@ -855,6 +855,53 @@ impl Database for PostgresBackend {
         Ok(ok == 1)
     }
 
+    // ── Attachments ───────────────────────────────────────────────────
+
+    async fn insert_attachment(&self, row: &crate::common::AttachmentRow) -> Result<String> {
+        let id = new_id();
+        let now = now_rfc3339();
+        sqlx::query(
+            "INSERT INTO attachments (id, event_id, project_id, filename, content_type, attachment_type, size_bytes, disk_path, created_at)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(&id)
+        .bind(&row.event_id)
+        .bind(&row.project_id)
+        .bind(&row.filename)
+        .bind(&row.content_type)
+        .bind(&row.attachment_type)
+        .bind(row.size_bytes)
+        .bind(&row.disk_path)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    async fn list_attachments_by_event(&self, event_id: &str) -> Result<Vec<crate::common::AttachmentRow>> {
+        let rows = sqlx::query_as::<_, crate::common::AttachmentRow>(
+            "SELECT id, event_id, project_id, filename, content_type, attachment_type, size_bytes, disk_path, created_at              FROM attachments WHERE event_id = $1 ORDER BY created_at",
+        )
+        .bind(event_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn get_attachment(&self, id: &str) -> Result<Option<crate::common::AttachmentRow>> {
+        let row = sqlx::query_as::<_, crate::common::AttachmentRow>(
+            "SELECT id, event_id, project_id, filename, content_type, attachment_type, size_bytes, disk_path, created_at              FROM attachments WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn delete_attachment(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM attachments WHERE id = $1").bind(id).execute(&self.pool).await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     // ── Auth ───────────────────────────────────────────────────────────
 
     async fn has_users(&self) -> Result<bool> {
