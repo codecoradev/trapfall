@@ -145,6 +145,7 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     }
     sqlx::query(include_str!("../../trapfalld/migrations/20260613000001_transactions.sql")).execute(pool).await?;
     sqlx::query(include_str!("../../trapfalld/migrations/20260627000001_release_health.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../../trapfalld/migrations/20260627000002_attachments.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -167,6 +168,7 @@ pub async fn run_postgres_migrations(pool: &sqlx::PgPool) -> Result<()> {
     sqlx::query(include_str!("../migrations/postgres/002_alert_rules.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/003_transactions.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/004_release_health.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../migrations/postgres/005_attachments.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -337,6 +339,13 @@ pub trait Database: Send + Sync {
     async fn record_auth_attempt(&self, email: &str, ip: &str, success: bool) -> Result<()>;
     async fn count_failed_attempts_email(&self, email: &str, minutes: i64) -> Result<i64>;
     async fn count_failed_attempts_ip(&self, ip: &str, minutes: i64) -> Result<i64>;
+
+    // ── Attachments ──────────────────────────────────────────────────
+
+    async fn insert_attachment(&self, row: &crate::common::AttachmentRow) -> Result<String>;
+    async fn list_attachments_by_event(&self, event_id: &str) -> Result<Vec<crate::common::AttachmentRow>>;
+    async fn get_attachment(&self, id: &str) -> Result<Option<crate::common::AttachmentRow>>;
+    async fn delete_attachment(&self, id: &str) -> Result<bool>;
 
     // ── Raw event fetch (MCP tool_get_event) ───────────────────────────
 

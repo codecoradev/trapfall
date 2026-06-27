@@ -357,3 +357,19 @@ pub fn escape_like_sqlite(input: &str) -> String {
 pub fn escape_ilike_postgres(input: &str) -> String {
     input.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
+
+// ── Attachment row type ─────────────────────────────────────────────
+
+/// Stored attachment metadata row (binary data lives on disk).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AttachmentRow {
+    pub id: String,
+    pub event_id: String,
+    pub project_id: String,
+    pub filename: String,
+    pub content_type: Option<String>,
+    pub attachment_type: Option<String>,
+    pub size_bytes: i64,
+    pub disk_path: String,
+    pub created_at: String,
+}

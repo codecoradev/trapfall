@@ -222,6 +222,24 @@ impl Store {
         self.db.get_enabled_rules_for_project(project_id).await
     }
 
+    // ── Attachments ────────────────────────────────────────────────────
+
+    pub async fn insert_attachment(&self, row: &trapfall_db::common::AttachmentRow) -> Result<String> {
+        self.db.insert_attachment(row).await
+    }
+
+    pub async fn list_attachments_by_event(&self, event_id: &str) -> Result<Vec<trapfall_db::common::AttachmentRow>> {
+        self.db.list_attachments_by_event(event_id).await
+    }
+
+    pub async fn get_attachment(&self, id: &str) -> Result<Option<trapfall_db::common::AttachmentRow>> {
+        self.db.get_attachment(id).await
+    }
+
+    pub async fn delete_attachment(&self, id: &str) -> Result<bool> {
+        self.db.delete_attachment(id).await
+    }
+
     // ── Alert History ───────────────────────────────────────────────────
 
     pub async fn insert_alert_history(&self, rule_id: &str, project_id: &str, issue_id: &str) -> Result<String> {
