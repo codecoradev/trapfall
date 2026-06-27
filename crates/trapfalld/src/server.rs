@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -28,6 +28,63 @@ pub struct AppState {
     pub ingest_tx: mpsc::Sender<IngestEvent>,
     pub rate_limiter: crate::rate_limit::RateLimiter,
     pub ws_hub: crate::ws::WsHub,
+}
+
+// ── Transaction Response Types ─────────────────────────────────────────
+
+#[derive(Serialize)]
+struct TransactionResponse {
+    id: String,
+    name: String,
+    release: Option<String>,
+    environment: Option<String>,
+    duration_ms: f64,
+    status: String,
+    received_at: String,
+}
+
+#[derive(Serialize)]
+struct TransactionDetailResponse {
+    id: String,
+    name: String,
+    release: Option<String>,
+    environment: Option<String>,
+    duration_ms: f64,
+    status: String,
+    received_at: String,
+    spans: Vec<SpanResponse>,
+}
+
+#[derive(Serialize)]
+struct SpanResponse {
+    span_id: String,
+    trace_id: String,
+    parent_span_id: Option<String>,
+    op: Option<String>,
+    description: Option<String>,
+    start_offset_ms: f64,
+    duration_ms: f64,
+    status: Option<String>,
+}
+
+// ── Transaction Query Types ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ListTransactionsQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_per_page")]
+    per_page: u32,
+}
+
+#[derive(Deserialize)]
+struct SlowestTransactionsQuery {
+    #[serde(default = "default_slowest_limit")]
+    limit: i64,
+}
+
+fn default_slowest_limit() -> i64 {
+    5
 }
 
 /// Build the Axum router.
@@ -57,6 +114,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/auth/me", get(crate::auth::me))
         .route("/api/0/auth/change-password", post(crate::auth::change_password))
         .route("/api/0/projects/{slug}/search", get(search_issues))
+        .route("/api/0/projects/{slug}/transactions", get(list_transactions))
+        .route("/api/0/projects/{slug}/transactions/slowest", get(get_slowest_transactions))
+        .route("/api/0/projects/{slug}/transactions/{txn_id}", get(get_transaction))
         .route("/api/0/ws", get(crate::ws::ws_handler))
         .route_layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth))
         .fallback(crate::spa::spa_handler)
@@ -573,6 +633,122 @@ async fn search_issues(
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+// ── Transaction Handlers ────────────────────────────────────────────────
+
+async fn list_transactions(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<ListTransactionsQuery>,
+) -> Result<Json<ListResponse<TransactionResponse>>, StatusCode> {
+    let store = state.store.clone();
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let limit = query.per_page.min(100) as i64;
+    let page = query.page.max(1);
+    let offset = ((page - 1) * limit as u32) as i64;
+
+    let total = store.count_transactions(&project.id).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, project_slug = %slug, "count_transactions failed");
+        0
+    });
+    let rows =
+        store.list_transactions(&project.id, limit, offset).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let data: Vec<TransactionResponse> = rows
+        .into_iter()
+        .map(|r| TransactionResponse {
+            id: r.id,
+            name: r.name,
+            release: r.release,
+            environment: r.environment,
+            duration_ms: r.duration_ms,
+            status: r.status,
+            received_at: r.received_at,
+        })
+        .collect();
+
+    Ok(Json(ListResponse { data, total, page, per_page: limit as u32 }))
+}
+
+async fn get_transaction(
+    State(state): State<AppState>,
+    Path((slug, txn_id)): Path<(String, String)>,
+) -> Result<Json<TransactionDetailResponse>, StatusCode> {
+    let store = state.store.clone();
+    // Verify project exists
+    store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (row, spans) = store
+        .get_transaction(&txn_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let span_responses: Vec<SpanResponse> = spans
+        .into_iter()
+        .map(|s| SpanResponse {
+            span_id: s.span_id,
+            trace_id: s.trace_id,
+            parent_span_id: s.parent_span_id,
+            op: s.op,
+            description: s.description,
+            start_offset_ms: s.start_offset_ms,
+            duration_ms: s.duration_ms,
+            status: s.status,
+        })
+        .collect();
+
+    Ok(Json(TransactionDetailResponse {
+        id: row.id,
+        name: row.name,
+        release: row.release,
+        environment: row.environment,
+        duration_ms: row.duration_ms,
+        status: row.status,
+        received_at: row.received_at,
+        spans: span_responses,
+    }))
+}
+
+async fn get_slowest_transactions(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<SlowestTransactionsQuery>,
+) -> Result<Json<Vec<TransactionResponse>>, StatusCode> {
+    let store = state.store.clone();
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let limit = query.limit.clamp(1, 100);
+    let rows = store.list_transactions(&project.id, limit, 0).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let data: Vec<TransactionResponse> = rows
+        .into_iter()
+        .map(|r| TransactionResponse {
+            id: r.id,
+            name: r.name,
+            release: r.release,
+            environment: r.environment,
+            duration_ms: r.duration_ms,
+            status: r.status,
+            received_at: r.received_at,
+        })
+        .collect();
+
+    Ok(Json(data))
 }
 
 // ── CORS Builder ──────────────────────────────────────────────────────
