@@ -51,7 +51,14 @@ fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
         secure_cookie: false,
         public_url: None,
     };
-    AppState { store, config, ingest_tx: tx, rate_limiter, ws_hub: WsHub::new(16) }
+    AppState {
+        store,
+        config,
+        ingest_tx: tx,
+        rate_limiter,
+        ws_hub: WsHub::new(16),
+        storage: std::sync::Arc::new(trapfalld::attachment_storage::AttachmentStorage::new(None)),
+    }
 }
 
 #[tokio::test]
