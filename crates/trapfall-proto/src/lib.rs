@@ -264,104 +264,6 @@ pub struct StoredEvent {
     pub received_at: String,
 }
 
-// ── Transaction / Span (Sentry Protocol) ──────────────────────────────────
-
-/// Span status in a distributed trace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SpanStatus {
-    Ok,
-    DeadlineExceeded,
-    Unauthenticated,
-    PermissionDenied,
-    NotFound,
-    AlreadyExists,
-    ResourceExhausted,
-    Cancelled,
-    DataLoss,
-    Unknown,
-    Aborted,
-    OutOfRange,
-    Unimplemented,
-    Internal,
-    Unavailable,
-    #[serde(other)]
-    Other,
-}
-
-impl Default for SpanStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
-/// A single span within a transaction trace.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Span {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub span_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_span_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub op: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<SpanStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_timestamp: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<f64>,
-    #[serde(default)]
-    pub tags: serde_json::Value,
-    #[serde(default)]
-    pub data: serde_json::Value,
-}
-
-/// A transaction envelope item (performance trace).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub event_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transaction: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_timestamp: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub release: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub environment: Option<String>,
-    #[serde(default)]
-    pub spans: Vec<Span>,
-    #[serde(default)]
-    pub contexts: serde_json::Value,
-    #[serde(default)]
-    pub tags: serde_json::Value,
-    #[serde(default)]
-    pub extra: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub platform: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub server_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request: Option<serde_json::Value>,
-}
-
-/// Aggregated result of parsing a single Sentry envelope.
-///
-/// Replaces the old `parse_envelope_text() -> Vec<Event>` return type.
-/// Each new envelope type (session, attachment) adds a field here.
-#[derive(Debug, Clone, Default)]
-pub struct ParsedEnvelope {
-    pub events: Vec<Event>,
-    pub transactions: Vec<Transaction>,
-}
-
 // ── Alert Rule Types ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,6 +300,81 @@ pub struct AlertHistory {
     pub last_error: Option<String>,
     pub created_at: String,
     pub sent_at: Option<String>,
+}
+
+// ── Transaction (Inbound) ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanStatus {
+    #[default]
+    Ok,
+    DeadlineExceeded,
+    Cancelled,
+    UnknownError,
+    InternalError,
+    ResourceExhausted,
+    Unauthenticated,
+    Unavailable,
+    AlreadyExists,
+    PermissionDenied,
+    NotFound,
+    FailedPrecondition,
+    Aborted,
+    OutOfRange,
+    Unimplemented,
+    DataLoss,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Span {
+    pub span_id: String,
+    pub trace_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_span_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub op: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub start_timestamp: f64,
+    pub timestamp: f64,
+    #[serde(default)]
+    pub status: SpanStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub event_id: String,
+    #[serde(default)]
+    pub level: Level,
+    pub transaction: String,
+    pub start_timestamp: f64,
+    pub timestamp: f64,
+    pub release: Option<String>,
+    pub environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<Span>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<serde_json::Value>,
+}
+
+// ── Envelope Parsing Result ──
+
+/// Parsed result from a Sentry envelope — may contain multiple item types.
+#[derive(Debug, Clone, Default)]
+pub struct ParsedEnvelope {
+    pub events: Vec<Event>,
+    pub transactions: Vec<Transaction>,
 }
 
 #[cfg(test)]
@@ -601,129 +578,69 @@ mod tests {
         }
     }
 
-    // ── Transaction / Span tests ───────────────────────────────────────
-
     #[test]
-    fn span_status_default_is_unknown() {
-        assert_eq!(SpanStatus::default(), SpanStatus::Unknown);
-    }
-
-    #[test]
-    fn serde_span_status_snake_case() {
-        let status = SpanStatus::DeadlineExceeded;
+    fn serde_span_status_roundtrip() {
+        let status = SpanStatus::Ok;
         let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(json, r#""deadline_exceeded""#);
+        assert_eq!(json, r#""ok""#);
         let back: SpanStatus = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, status);
-    }
-
-    #[test]
-    fn serde_span_status_other_deserialize() {
-        let back: SpanStatus = serde_json::from_str(r#""custom_value""#).unwrap();
-        assert_eq!(back, SpanStatus::Other);
+        assert_eq!(back, SpanStatus::Ok);
     }
 
     #[test]
     fn serde_span_minimal() {
         let span = Span {
-            span_id: Some("abc123".into()),
-            trace_id: None,
+            span_id: "s1".into(),
+            trace_id: "t1".into(),
             parent_span_id: None,
             op: Some("db.sql.select".into()),
             description: None,
-            status: Some(SpanStatus::Ok),
-            start_timestamp: Some(1.0),
-            timestamp: Some(2.5),
-            tags: serde_json::Value::Null,
-            data: serde_json::Value::Null,
+            start_timestamp: 100.0,
+            timestamp: 150.0,
+            status: SpanStatus::Ok,
+            tags: None,
+            data: None,
         };
         let json = serde_json::to_string(&span).unwrap();
         let back: Span = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.span_id.unwrap(), "abc123");
+        assert_eq!(back.span_id, "s1");
+        assert_eq!(back.trace_id, "t1");
         assert_eq!(back.op.unwrap(), "db.sql.select");
-        assert_eq!(back.status.unwrap(), SpanStatus::Ok);
-        assert_eq!(back.start_timestamp.unwrap(), 1.0);
-    }
-
-    #[test]
-    fn serde_span_omits_none_fields() {
-        let span = Span {
-            span_id: None,
-            trace_id: None,
-            parent_span_id: None,
-            op: None,
-            description: None,
-            status: None,
-            start_timestamp: None,
-            timestamp: None,
-            tags: serde_json::Value::Null,
-            data: serde_json::Value::Null,
-        };
-        let json = serde_json::to_string(&span).unwrap();
-        assert_eq!(json, r#"{"tags":null,"data":null}"#);
+        assert!(back.parent_span_id.is_none());
     }
 
     #[test]
     fn serde_transaction_with_spans() {
         let tx = Transaction {
-            event_id: "tx-1".into(),
-            transaction: Some("GET /api/users".into()),
-            start_timestamp: Some(1.0),
-            timestamp: Some(3.5),
-            release: Some("app@1.0.0".into()),
+            event_id: "e1".into(),
+            level: Level::Info,
+            transaction: "POST /api/feedback".into(),
+            start_timestamp: 1703894474.296,
+            timestamp: 1703894474.891,
+            release: Some("rungu@0.2.0".into()),
             environment: Some("production".into()),
             spans: vec![Span {
-                span_id: Some("sp-1".into()),
-                trace_id: Some("tr-1".into()),
+                span_id: "sp1".into(),
+                trace_id: "tr1".into(),
                 parent_span_id: None,
                 op: Some("http.server".into()),
-                description: None,
-                status: Some(SpanStatus::Ok),
-                start_timestamp: Some(1.0),
-                timestamp: Some(3.5),
-                tags: serde_json::Value::Null,
-                data: serde_json::Value::Null,
+                description: Some("handle request".into()),
+                start_timestamp: 1703894474.296,
+                timestamp: 1703894474.891,
+                status: SpanStatus::Ok,
+                tags: None,
+                data: None,
             }],
-            contexts: serde_json::Value::Null,
-            tags: serde_json::Value::Null,
-            extra: serde_json::Value::Null,
-            platform: None,
-            server_name: None,
-            user: None,
+            contexts: None,
             request: None,
+            tags: None,
+            extra: None,
         };
         let json = serde_json::to_string(&tx).unwrap();
         let back: Transaction = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.event_id, "tx-1");
-        assert_eq!(back.transaction.unwrap(), "GET /api/users");
-        assert_eq!(back.release.unwrap(), "app@1.0.0");
+        assert_eq!(back.transaction, "POST /api/feedback");
         assert_eq!(back.spans.len(), 1);
-        assert_eq!(back.spans[0].op.as_deref(), Some("http.server"));
-    }
-
-    #[test]
-    fn serde_transaction_minimal() {
-        let tx = Transaction {
-            event_id: "minimal".into(),
-            transaction: None,
-            start_timestamp: None,
-            timestamp: None,
-            release: None,
-            environment: None,
-            spans: vec![],
-            contexts: serde_json::Value::Null,
-            tags: serde_json::Value::Null,
-            extra: serde_json::Value::Null,
-            platform: None,
-            server_name: None,
-            user: None,
-            request: None,
-        };
-        let json = serde_json::to_string(&tx).unwrap();
-        let back: Transaction = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.event_id, "minimal");
-        assert!(back.spans.is_empty());
-        assert!(back.transaction.is_none());
+        assert_eq!(back.spans[0].op.clone().unwrap(), "http.server");
     }
 
     #[test]
@@ -734,42 +651,11 @@ mod tests {
     }
 
     #[test]
-    fn parsed_envelope_holds_mixed_types() {
-        let mut env = ParsedEnvelope::default();
-        env.events.push(Event {
-            event_id: "e1".into(),
-            level: Level::Error,
-            platform: Some("rust".into()),
-            release: None,
-            environment: None,
-            server_name: None,
-            breadcrumbs: Breadcrumbs::default(),
-            exception: None,
-            message: Some("err".into()),
-            tags: serde_json::Value::Null,
-            extra: serde_json::Value::Null,
-            contexts: serde_json::Value::Null,
-            timestamp: None,
-        });
-        env.transactions.push(Transaction {
-            event_id: "t1".into(),
-            transaction: Some("GET /".into()),
-            start_timestamp: None,
-            timestamp: None,
-            release: None,
-            environment: None,
-            spans: vec![],
-            contexts: serde_json::Value::Null,
-            tags: serde_json::Value::Null,
-            extra: serde_json::Value::Null,
-            platform: None,
-            server_name: None,
-            user: None,
-            request: None,
-        });
-        assert_eq!(env.events.len(), 1);
-        assert_eq!(env.transactions.len(), 1);
-        assert_eq!(env.events[0].event_id, "e1");
-        assert_eq!(env.transactions[0].event_id, "t1");
+    fn serde_transaction_minimal() {
+        let tx_json = r#"{"event_id":"e1","level":"info","transaction":"GET /","start_timestamp":1.0,"timestamp":2.0}"#;
+        let tx: Transaction = serde_json::from_str(tx_json).unwrap();
+        assert_eq!(tx.event_id, "e1");
+        assert!(tx.spans.is_empty());
+        assert!(tx.release.is_none());
     }
 }
