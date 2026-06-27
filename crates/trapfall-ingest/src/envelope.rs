@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::io::Read;
-use trapfall_proto::{Event, ParsedEnvelope, Transaction};
+use trapfall_proto::{Event, ParsedEnvelope, SessionAggregates, SessionUpdate, Transaction};
 
 /// Parse a Sentry envelope body into individual events and transactions.
 ///
@@ -88,8 +88,16 @@ fn parse_envelope_text(text: &str) -> Result<ParsedEnvelope> {
             if let Ok(txn) = serde_json::from_str::<Transaction>(body_line) {
                 result.transactions.push(txn);
             }
+        } else if item_type == "session" {
+            if let Ok(session) = serde_json::from_str::<SessionUpdate>(body_line) {
+                result.session_updates.push(session);
+            }
+        } else if item_type == "sessions" {
+            if let Ok(aggregates) = serde_json::from_str::<SessionAggregates>(body_line) {
+                result.session_aggregates.push(aggregates);
+            }
         }
-        // Ignore other item types (attachments, sessions, etc.)
+        // Ignore other item types (attachments, etc.)
     }
 
     Ok(result)
@@ -124,16 +132,45 @@ mod tests {
     }
 
     #[test]
-    fn parse_envelope_skips_non_event_items() {
+    fn parse_envelope_session_and_event_together() {
         let envelope = r#"{"event_id":"abc123","sent_at":"2026-01-01T00:00:00Z"}
 {"type":"session"}
-{"sid":"session1"}
+{"session_id":"sess-1","init":true,"started":"2026-06-27T10:00:00Z","status":"ok","errors":0,"attributes":{"release":"myapp@1.0.0"}}
 {"type":"event","length":50}
 {"event_id":"abc123","message":"error","level":"error"}"#;
 
         let result = parse_envelope_text(envelope).unwrap();
         assert_eq!(result.events.len(), 1);
+        assert_eq!(result.session_updates.len(), 1);
+        assert_eq!(result.session_updates[0].session_id, "sess-1");
         assert_eq!(result.events[0].event_id, "abc123");
+    }
+
+    #[test]
+    fn parse_envelope_aggregated_sessions() {
+        let envelope = r#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"sessions"}
+{"aggregates":[{"started":"2026-06-27T10:00:00Z","exited":90,"errored":5,"abnormal":2,"crashed":3}],"attributes":{"release":"myapp@1.0.0"}}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert!(result.events.is_empty());
+        assert_eq!(result.session_aggregates.len(), 1);
+        assert_eq!(result.session_aggregates[0].aggregates[0].crashed, 3);
+        assert_eq!(result.session_aggregates[0].attributes.release, "myapp@1.0.0");
+    }
+
+    #[test]
+    fn parse_envelope_malformed_session_skipped() {
+        let envelope = r#"{"event_id":"e1","sent_at":"2026-01-01T00:00:00Z"}
+{"type":"session"}
+{invalid json here}
+{"type":"event","length":50}
+{"event_id":"e2","message":"still works","level":"error"}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert!(result.session_updates.is_empty(), "malformed session should be skipped");
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_id, "e2");
     }
 
     #[test]
