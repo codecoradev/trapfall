@@ -34,7 +34,7 @@
 	let wsUnsub: (() => void) | null = $state(null);
 
 	let searchQuery: string = $state('');
-	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const statuses = ['unresolved', 'resolved', 'ignored'];
 	const levels = ['fatal', 'error', 'warning', 'info', 'debug'];
@@ -197,7 +197,7 @@
 			value={searchQuery}
 			oninput={(e) => {
 				searchQuery = (e.target as HTMLInputElement).value;
-				clearTimeout(debounceTimer);
+				if (debounceTimer !== undefined) clearTimeout(debounceTimer);
 				debounceTimer = setTimeout(() => {
 					currentPage = 1;
 					navigate();
@@ -206,7 +206,7 @@
 			}
 			onkeydown={(e) => {
 				if (e.key === 'Enter') {
-					clearTimeout(debounceTimer);
+					if (debounceTimer !== undefined) clearTimeout(debounceTimer);
 					currentPage = 1;
 					navigate();
 				}
