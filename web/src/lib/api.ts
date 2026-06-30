@@ -70,6 +70,15 @@ export interface ListResponse<T> {
 	per_page: number;
 }
 
+export class ApiClientError extends Error {
+	constructor(
+		public status: number,
+		message: string
+	) {
+		super(message);
+		this.name = 'ApiClientError';
+	}
+}
 
 // ── Transactions ──────────────────────────────────────────────────────
 

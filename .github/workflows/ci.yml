@@ -93,7 +93,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      - run: npm run check
       - run: npm run build
+      - run: npm test
 
   cora-review:
     name: Cora Review
