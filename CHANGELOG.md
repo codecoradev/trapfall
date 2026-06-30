@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-30
+
+### Fixed
+
+- **Login crash — `ApiClientError is not defined`** (#275): The `ApiClientError` class was accidentally deleted during the v0.2.0 merge. Restored the class definition in `api.ts`. This caused a runtime crash on every login attempt.
+- **Dead issue detail route** (#275): Removed the superseded `issues/[id]` route that accessed non-existent `event.platform` and `event.message` properties. The correct route is `issues/[issueId]/events/[eventId]`.
+- **debounceTimer type error** (#275): Changed from `null` to `undefined` to match `clearTimeout` TypeScript signature.
+- **vitest config** (#275): Extracted from `vite.config.ts` into dedicated `vitest.config.ts` with proper SvelteKit alias resolution.
+
+### Changed
+
+- **CI: frontend quality gate** (#275): `web-build` CI job now runs `svelte-check` and `vitest` alongside `vite build` — prevents broken frontend code from merging.
+
 ## [0.2.0] - 2026-06-27
 
 ### Added — Phase 1: Transaction (Performance Tracing)
