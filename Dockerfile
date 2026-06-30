@@ -51,11 +51,11 @@ WORKDIR /app
 COPY --from=builder /app/target/release/trapfall /trapfall
 COPY --from=frontend /app/web/build /app/web/build
 
-ENV TRAPFALL_LISTEN=0.0.0.0:3000
+ENV TRAPFALL_LISTEN=0.0.0.0:9090
 ENV RUST_LOG=trapfall=info
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 VOLUME /data
-EXPOSE 3000
+EXPOSE 9090
 ENTRYPOINT ["/trapfall"]
 CMD ["serve"]

@@ -27,7 +27,7 @@ Lightweight alternative to Sentry. Capture errors from any Sentry SDK, view them
 
 ```bash
 docker pull ghcr.io/codecoradev/trapfall:latest
-docker run -p 3000:3000 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:latest
+docker run -p 9090:9090 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:latest
 ```
 
 Or with Docker Compose:
@@ -38,7 +38,7 @@ git clone https://github.com/codecoradev/trapfall.git
 cd trapfall
 docker compose up -d
 
-# Open http://localhost:3000 → Setup wizard
+# Open http://localhost:9090 → Setup wizard
 ```
 
 ### From Binary
@@ -48,7 +48,7 @@ Download from [GitHub Releases](https://github.com/codecoradev/trapfall/releases
 ```bash
 # Linux (x86_64)
 tar xzf trapfall-x86_64-unknown-linux-gnu-v0.0.5.tar.gz
-./trapfall --db trapfall.db serve --listen 0.0.0.0:3000
+./trapfall --db trapfall.db serve --listen 0.0.0.0:9090
 ```
 
 ### From Source
@@ -58,12 +58,12 @@ tar xzf trapfall-x86_64-unknown-linux-gnu-v0.0.5.tar.gz
 cd web && npm ci && npm run build && cd ..
 
 # Build + run
-cargo run --release -p trapfalld -- --db trapfall.db serve --listen 0.0.0.0:3000
+cargo run --release -p trapfalld -- --db trapfall.db serve --listen 0.0.0.0:9090
 ```
 
 ## Setup Wizard
 
-1. Open `http://localhost:3000` → First run shows setup wizard
+1. Open `http://localhost:9090` → First run shows setup wizard
 2. Create admin account (email, name, password)
 3. Default project created automatically with DSN
 4. Copy DSN → integrate with your app
@@ -92,27 +92,27 @@ Works with any Sentry SDK — just swap the DSN to point to your TrapFall server
 ### Rust
 
 ```rust
-sentry::init(("https://<key>@your-server:3000/<project_id>", sentry::ClientOptions::default()));
+sentry::init(("https://<key>@your-server:9090/<project_id>", sentry::ClientOptions::default()));
 ```
 
 ### Python
 
 ```python
 import sentry_sdk
-sentry_sdk.init(dsn="https://<key>@your-server:3000/<project_id>")
+sentry_sdk.init(dsn="https://<key>@your-server:9090/<project_id>")
 ```
 
 ### JavaScript / Node.js
 
 ```js
-Sentry.init({ dsn: "https://<key>@your-server:3000/<project_id>" });
+Sentry.init({ dsn: "https://<key>@your-server:9090/<project_id>" });
 ```
 
 ### Flutter / Dart
 
 ```dart
 await SentryFlutter.init((options) => {
-  options.dsn = "https://<key>@your-server:3000/<project_id>",
+  options.dsn = "https://<key>@your-server:9090/<project_id>",
 });
 ```
 
@@ -133,7 +133,7 @@ trapfall mcp                          # Start MCP server (stdio)
 | Env | Default | Description |
 |-----|---------|-------------|
 | `TRAPFALL_DATABASE_URL` | `sqlite:trapfall.db` | Database URL (`sqlite:` or `postgres://`, falls back to `--db`) |
-| `TRAPFALL_LISTEN` | `0.0.0.0:9090` | HTTP listen address (Docker uses 3000) |
+| `TRAPFALL_LISTEN` | `0.0.0.0:9090` | HTTP listen address (Docker default) |
 | `TRAPFALL_SECURE_COOKIE` | `true` | Set `false` for HTTP local dev |
 | `TRAPFALL_CORS_ORIGINS` | *(empty = allow all)* | Comma-separated origins for production |
 | `RUST_LOG` | `info` | Log level (`debug` for verbose) |
