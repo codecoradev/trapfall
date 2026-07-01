@@ -14,12 +14,12 @@ docker pull ghcr.io/codecoradev/trapfall:latest
 # Run (SQLite, zero-config)
 docker run -d \
   --name trapfall \
-  -p 3000:3000 \
+  -p 9090:9090 \
   -v trapfall-data:/data \
   ghcr.io/codecoradev/trapfall:latest
 ```
 
-Open `http://localhost:3000` → setup wizard.
+Open `http://localhost:9090` → setup wizard.
 
 ### Docker Compose
 
@@ -54,10 +54,10 @@ chmod +x trapfall
 
 ```bash
 # Start server
-./trapfall serve --listen 0.0.0.0:3000
+./trapfall serve --listen 0.0.0.0:9090
 
 # Or with custom database path
-./trapfall --db /var/lib/trapfall.db serve --listen 0.0.0.0:3000
+./trapfall --db /var/lib/trapfall.db serve --listen 0.0.0.0:9090
 ```
 
 ## From Source
@@ -70,14 +70,14 @@ cd trapfall
 cd web && npm ci && npm run build && cd ..
 
 # Build + run
-cargo run --release -p trapfalld -- serve --listen 0.0.0.0:3000
+cargo run --release -p trapfalld -- serve --listen 0.0.0.0:9090
 ```
 
 ## Quick Start
 
 1. **Start the server** (any method above)
 
-2. **Open `http://localhost:3000`** → setup wizard appears on first run
+2. **Open `http://localhost:9090`** → setup wizard appears on first run
 
 3. **Create admin account** (email, name, password)
 
@@ -89,24 +89,24 @@ cargo run --release -p trapfalld -- serve --listen 0.0.0.0:3000
 
    ```js
    // JavaScript / Node.js
-   Sentry.init({ dsn: "https://<key>@localhost:3000/<project_id>" });
+   Sentry.init({ dsn: "https://<key>@localhost:9090/<project_id>" });
    ```
 
    ```python
    # Python
    import sentry_sdk
-   sentry_sdk.init(dsn: "https://<key>@localhost:3000/<project_id>")
+   sentry_sdk.init(dsn: "https://<key>@localhost:9090/<project_id>")
    ```
 
    ```rust
    // Rust
-   sentry::init(("https://<key>@localhost:3000/<project_id>", sentry::ClientOptions::default()));
+   sentry::init(("https://<key>@localhost:9090/<project_id>", sentry::ClientOptions::default()));
    ```
 
    ```dart
    // Flutter / Dart
    await SentryFlutter.init((options) => {
-     options.dsn = "https://<key>@localhost:3000/<project_id>",
+     options.dsn = "https://<key>@localhost:9090/<project_id>",
    });
    ```
 

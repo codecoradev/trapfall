@@ -25,7 +25,7 @@ nano .env
 
 Yang perlu diubah di `.env`:
 ```bash
-TRAPFALL_PORT=3000                    # port yang dibuka
+TRAPFALL_PORT=9090                    # port yang dibuka
 TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db
 TRAPFALL_SECURE_COOKIE=false          # false jika belum HTTPS, true jika sudah
 TRAPFALL_CORS_ORIGINS=                # kosongkan jika single-server
@@ -39,7 +39,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 ### 3. Setup Wizard
 
-Buka `http://VPS_IP:3000` → buat admin account → selesai.
+Buka `http://VPS_IP:9090` → buat admin account → selesai.
 
 ### 4. Cek status
 
@@ -51,7 +51,7 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f
 
 # Health check
-curl http://localhost:3000/health
+curl http://localhost:9090/health
 ```
 
 ---
@@ -93,7 +93,7 @@ Postgres container otomatis start bersama TrapFall.
 docker compose -f docker-compose.prod.yml ps postgres
 
 # Check metrics
-curl http://localhost:3000/metrics
+curl http://localhost:9090/metrics
 ```
 
 ---
@@ -122,7 +122,7 @@ Buat `Caddyfile`:
 
 ```text
 trapfall.yourdomain.com {
-    reverse_proxy trapfall:3000
+    reverse_proxy trapfall:9090
 }
 ```
 

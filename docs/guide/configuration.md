@@ -61,14 +61,14 @@ services:
   trapfall:
     image: ghcr.io/codecoradev/trapfall:0.0.5
     ports:
-      - "3000:3000"
+      - "9090:9090"
     volumes:
       - trapfall-data:/data
     environment:
       - RUST_LOG=trapfall=debug
       - TRAPFALL_SECURE_COOKIE=false
       - TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db
-    command: serve --listen 0.0.0.0:3000
+    command: serve --listen 0.0.0.0:9090
 ```
 
 ## Database

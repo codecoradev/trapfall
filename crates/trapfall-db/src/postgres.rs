@@ -48,7 +48,7 @@ impl Database for PostgresBackend {
     // ── Projects ───────────────────────────────────────────────────────
 
     async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
-        self.create_project_with_host(slug, name, "localhost:3000").await
+        self.create_project_with_host(slug, name, "localhost:9090").await
     }
 
     async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {

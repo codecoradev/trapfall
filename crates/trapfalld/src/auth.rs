@@ -116,7 +116,7 @@ pub async fn setup(
     let host = state
         .config
         .dsn_host()
-        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000").to_string());
+        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:9090").to_string());
     let project = store
         .create_project_with_host("default", "Default Project", &host)
         .await

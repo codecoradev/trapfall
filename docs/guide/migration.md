@@ -62,7 +62,7 @@ Update your deployment to use the Postgres URL:
 
 ```bash
 TRAPFALL_DATABASE_URL=postgres://user:password@localhost:5432/trapfall \
-  trapfall serve --listen 0.0.0.0:3000
+  trapfall serve --listen 0.0.0.0:9090
 ```
 
 ## Notes
