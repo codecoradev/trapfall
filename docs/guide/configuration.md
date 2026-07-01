@@ -10,6 +10,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `TRAPFALL_LISTEN` | `0.0.0.0:9090` | HTTP listen address |
 | `TRAPFALL_SECURE_COOKIE` | `true` | Set `false` for HTTP local dev |
 | `TRAPFALL_CORS_ORIGINS` | *(empty = allow all)* | Comma-separated origins |
+| `TRAPFALL_TIMEZONE` | `UTC` | IANA timezone for display only (logs + dashboard); storage stays UTC |
 | `RUST_LOG` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
 
 ## Database URL
@@ -51,6 +52,22 @@ TRAPFALL_SECURE_COOKIE=true
 TRAPFALL_CORS_ORIGINS=https://trapfall.yourcompany.com
 RUST_LOG=trapfall=info
 ```
+
+## Display Timezone
+
+`TRAPFALL_TIMEZONE` sets the timezone for **display only** — log timestamps
+and the dashboard. **All stored timestamps remain UTC** (the immutable
+invariant used by Sentry SDKs, DSNs, and retention); this setting never
+affects stored data, only how times are rendered.
+
+```bash
+# Jakarta time (WIB, UTC+7) for logs + dashboard
+TRAPFALL_TIMEZONE=Asia/Jakarta
+```
+
+Use any [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+(e.g. `America/New_York`, `Europe/London`, `Asia/Singapore`). Invalid values
+fall back to `UTC` with a warning at startup.
 
 ## Docker Compose
 

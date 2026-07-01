@@ -63,6 +63,28 @@ paths:
         "200":
           description: Prometheus formatted metrics
 
+  /api/0/config:
+    get:
+      tags: [System]
+      summary: Public runtime config (display only)
+      description: >
+        Unauthenticated runtime config consumed by the dashboard. Returns the
+        configured display timezone (IANA name). No secrets. All persisted
+        timestamps remain UTC; this value only affects display formatting.
+      operationId: getPublicConfig
+      responses:
+        "200":
+          description: Public runtime configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  timezone:
+                    type: string
+                    example: Asia/Jakarta
+                    description: IANA timezone name used for display (UTC default)
+
   # ── Setup ────────────────────────────────────────────────────────
 
   /api/0/setup:

@@ -50,6 +50,7 @@ fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
         cors_origins: Vec::new(),
         secure_cookie: false,
         public_url: None,
+        timezone: "UTC".to_string(),
     };
     AppState {
         store,

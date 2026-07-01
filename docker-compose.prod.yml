@@ -29,6 +29,7 @@ services:
       - TRAPFALL_DATABASE_URL=${TRAPFALL_DATABASE_URL:-sqlite:/data/trapfall.db}
       - TRAPFALL_SECURE_COOKIE=${TRAPFALL_SECURE_COOKIE:-true}
       - TRAPFALL_CORS_ORIGINS=${TRAPFALL_CORS_ORIGINS:-}
+      - TRAPFALL_TIMEZONE=${TRAPFALL_TIMEZONE:-UTC}
     command: >
       serve
       --listen 0.0.0.0:9090
