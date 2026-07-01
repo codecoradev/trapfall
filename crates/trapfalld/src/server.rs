@@ -205,11 +205,11 @@ async fn create_project(
     let slug = req.slug.unwrap_or_else(|| req.name.to_lowercase().replace(' ', "-"));
     // Prefer configured `public_url` (TRAPFALL_PUBLIC_URL) for DSN generation.
     // Fall back to the request Host header so local dev keeps working without
-    // extra config (e.g. user accesses via http://localhost:3000).
+    // extra config (e.g. user accesses via http://localhost:9090).
     let host = state
         .config
         .dsn_host()
-        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000").to_string());
+        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:9090").to_string());
     let project = store.create_project_with_host(&slug, &req.name, &host).await.map_err(|e| {
         tracing::warn!("Create project failed: {e}");
         StatusCode::CONFLICT

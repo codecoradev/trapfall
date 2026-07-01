@@ -5,7 +5,7 @@
 # Quick start:
 #   1. Copy .env.production to .env, edit values
 #   2. docker compose up -d
-#   3. Open http://YOUR_VPS_IP:3000 → setup wizard
+#   3. Open http://YOUR_VPS_IP:9090 → setup wizard
 #
 # SQLite mode (default, single file, zero extra deps):
 #   docker compose up -d
@@ -21,7 +21,7 @@ services:
     container_name: trapfall
     restart: unless-stopped
     ports:
-      - "${TRAPFALL_PORT:-3000}:3000"
+      - "${TRAPFALL_PORT:-9090}:9090"
     volumes:
       - trapfall-data:/data
     environment:
@@ -31,7 +31,7 @@ services:
       - TRAPFALL_CORS_ORIGINS=${TRAPFALL_CORS_ORIGINS:-}
     command: >
       serve
-      --listen 0.0.0.0:3000
+      --listen 0.0.0.0:9090
     healthcheck:
       test: ["CMD", "/trapfall", "healthcheck"]
       interval: 30s

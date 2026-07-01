@@ -7,7 +7,7 @@ services:
     container_name: trapfall
     restart: unless-stopped
     ports:
-      - "${TRAPFALL_PORT:-3000}:3000"
+      - "${TRAPFALL_PORT:-9090}:9090"
     volumes:
       - trapfall-data:/data
     environment:
@@ -17,7 +17,7 @@ services:
       - TRAPFALL_DATABASE_URL=${TRAPFALL_DATABASE_URL:-sqlite:/data/trapfall.db}
     command: >
       serve
-      --listen 0.0.0.0:3000
+      --listen 0.0.0.0:9090
     healthcheck:
       test: ["CMD", "/trapfall", "healthcheck"]
       interval: 30s

@@ -50,16 +50,16 @@ Conditions are JSON objects. Currently supports:
 
 ```bash
 # List rules
-curl -b cookie http://localhost:3000/api/0/projects/my-app/rules
+curl -b cookie http://localhost:9090/api/0/projects/my-app/rules
 
 # Create rule
-curl -b cookie -X POST http://localhost:3000/api/0/projects/my-app/rules \
+curl -b cookie -X POST http://localhost:9090/api/0/projects/my-app/rules \
   -H "Content-Type: application/json" \
   -d '{"name":"Fatal Alert","conditions":{"level":"fatal"},"action_type":"webhook","action_config":{"url":"https://hooks.slack.com/..."}}'
 
 # Toggle rule
-curl -b cookie -X POST http://localhost:3000/api/0/rules/<id>/toggle
+curl -b cookie -X POST http://localhost:9090/api/0/rules/<id>/toggle
 
 # Delete rule
-curl -b cookie -X DELETE http://localhost:3000/api/0/rules/<id>
+curl -b cookie -X DELETE http://localhost:9090/api/0/rules/<id>
 ```

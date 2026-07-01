@@ -45,7 +45,7 @@ impl Database for SqliteBackend {
     // ── Projects ───────────────────────────────────────────────────────
 
     async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
-        self.create_project_with_host(slug, name, "localhost:3000").await
+        self.create_project_with_host(slug, name, "localhost:9090").await
     }
 
     async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {
@@ -114,8 +114,8 @@ impl Database for SqliteBackend {
             .dsn
             .split('@')
             .nth(1)
-            .map(|s| s.split('/').next().unwrap_or("localhost:3000"))
-            .unwrap_or("localhost:3000");
+            .map(|s| s.split('/').next().unwrap_or("localhost:9090"))
+            .unwrap_or("localhost:9090");
         let new_dsn = generate_dsn_with(host, project_id);
         let new_dsn_key = extract_dsn_key(&new_dsn);
         sqlx::query("UPDATE projects SET dsn = ?, dsn_key = ? WHERE id = ?")
