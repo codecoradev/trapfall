@@ -125,6 +125,7 @@ pub struct Event {
     #[serde(default)]
     pub breadcrumbs: Breadcrumbs,
     pub exception: Option<ExceptionValues>,
+    #[serde(default, deserialize_with = "deserialize_message", alias = "Message")]
     pub message: Option<String>,
     #[serde(default)]
     pub tags: serde_json::Value,
@@ -133,6 +134,30 @@ pub struct Event {
     #[serde(rename = "contexts", default)]
     pub contexts: serde_json::Value,
     pub timestamp: Option<String>,
+}
+
+/// Deserialize a Sentry event `message` field that may arrive either as a
+/// plain string (minimal SDKs) or as the `Message` interface object
+/// `{ "formatted": "...", "message": "..." }` (modern SDKs incl. Dart/Flutter).
+///
+/// We collapse both forms into the formatted display string, preferring
+/// `formatted`, then `message`, then falling back to `None`.
+/// Without this, a `message` object silently fails whole-event
+/// deserialization (serde "invalid type: map, expected a string") and the
+/// event is dropped.
+pub fn deserialize_message<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| match v {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Object(map) => map
+            .get("formatted")
+            .and_then(|f| f.as_str().map(str::to_string))
+            .or_else(|| map.get("message").and_then(|m| m.as_str().map(str::to_string))),
+        _ => None,
+    }))
 }
 
 /// Wrapper for exception values (Sentry format).
