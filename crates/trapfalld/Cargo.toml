@@ -31,6 +31,7 @@ serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite"] }
 tracing = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 tower-http = { workspace = true }
 anyhow = { workspace = true }
 tracing-subscriber = { workspace = true }

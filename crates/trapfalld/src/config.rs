@@ -30,6 +30,14 @@ pub struct Config {
     /// Set to `false`/`0` for local HTTP development.
     #[serde(default = "default_secure_cookie")]
     pub secure_cookie: bool,
+    /// Display timezone (`TRAPFALL_TIMEZONE`, default `UTC`).
+    ///
+    /// IANA timezone name (e.g. `Asia/Jakarta`, `America/New_York`). Used
+    /// **for display only** — log timestamps and the `/api/0/config` payload
+    /// consumed by the dashboard. All persisted timestamps remain UTC; this
+    /// never affects storage. Invalid values fall back to `UTC` with a warn.
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
     /// Public base URL of the TrapFall instance
     /// (`TRAPFALL_PUBLIC_URL` / legacy `TRAPFALL_DSN_HOST`).
     ///
@@ -44,7 +52,20 @@ fn default_secure_cookie() -> bool {
     true
 }
 
+/// Default display timezone: UTC.
+fn default_timezone() -> String {
+    "UTC".to_string()
+}
+
 impl Config {
+    /// Parsed IANA timezone for display (UTC on parse failure).
+    ///
+    /// All persisted timestamps stay UTC RFC3339; this is used only by log
+    /// formatting and the public config endpoint.
+    pub fn tz(&self) -> chrono_tz::Tz {
+        self.timezone.parse().unwrap_or(chrono_tz::UTC)
+    }
+
     /// Returns "Secure" if `secure_cookie` is true, empty string otherwise.
     pub fn cookie_secure_flag(&self) -> &'static str {
         if self.secure_cookie { "Secure" } else { "" }
@@ -83,6 +104,7 @@ impl Config {
             cors_origins: parse_cors_origins(),
             secure_cookie: parse_secure_cookie(),
             public_url: parse_public_url(),
+            timezone: parse_timezone(),
         }
     }
 
@@ -144,6 +166,29 @@ fn parse_public_url() -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Parse `TRAPFALL_TIMEZONE` as an IANA timezone name (e.g. `Asia/Jakarta`).
+/// Invalid/unset values fall back to `UTC`. Invalid values emit a warning.
+pub fn parse_timezone() -> String {
+    match std::env::var("TRAPFALL_TIMEZONE") {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return "UTC".to_string();
+            }
+            if trimmed.parse::<chrono_tz::Tz>().is_ok() {
+                trimmed.to_string()
+            } else {
+                tracing::warn!(
+                    timezone = %trimmed,
+                    "Invalid TRAPFALL_TIMEZONE — falling back to UTC. Use an IANA name like 'Asia/Jakarta'."
+                );
+                "UTC".to_string()
+            }
+        }
+        Err(_) => "UTC".to_string(),
+    }
+}
+
 /// Normalize a user-provided public-URL value into a bare `host[:port]`.
 ///
 /// Accepts all of: `https://trapfall.example.com`,
@@ -169,6 +214,7 @@ mod tests {
             cors_origins: vec![],
             secure_cookie: true,
             public_url: None,
+            timezone: "UTC".to_string(),
         }
     }
 

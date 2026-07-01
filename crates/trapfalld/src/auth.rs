@@ -246,6 +246,7 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request<axum::
         || path.ends_with("/auth/logout")
         || path == "/health"
         || path == "/metrics"
+        || path == "/api/0/config"
         || path.contains("/envelope/");
     if is_public {
         return next.run(req).await;

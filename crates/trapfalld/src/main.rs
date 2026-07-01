@@ -102,8 +102,9 @@ enum DbCommands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Init tracing
+    // Init tracing — timestamps in the configured display timezone (UTC by default).
     tracing_subscriber::fmt()
+        .with_timer(trapfalld::log_time::LocalTzTimer::from_env())
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| cli.log_level.clone().into()),
         )
@@ -191,12 +192,13 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
 
     let config = Config::from_env(&db_url, &listen);
     info!(
-        "Config: db={}, listen={}, secure_cookie={}, cors_origins={}, public_url={}",
+        "Config: db={}, listen={}, secure_cookie={}, cors_origins={}, public_url={}, timezone={}",
         config.db_path.display(),
         config.listen_addr,
         config.secure_cookie,
         if config.cors_origins.is_empty() { "<all>" } else { "<restricted>" },
         config.dsn_host().unwrap_or_else(|| "<unset, will use Host header>".into()),
+        config.timezone,
     );
 
     // Channel: ingest → digest

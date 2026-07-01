@@ -13,6 +13,7 @@ services:
     environment:
       - RUST_LOG=${RUST_LOG:-trapfall=info}
       - TRAPFALL_SECURE_COOKIE=${TRAPFALL_SECURE_COOKIE:-false}
+      - TRAPFALL_TIMEZONE=${TRAPFALL_TIMEZONE:-UTC}
       # Database URL: sqlite path (default) or postgres://... (requires postgres feature)
       - TRAPFALL_DATABASE_URL=${TRAPFALL_DATABASE_URL:-sqlite:/data/trapfall.db}
     command: >

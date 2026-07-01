@@ -134,6 +134,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
+        .route("/api/0/config", get(get_public_config))
         // Public ingest API (DSN key auth)
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
         // Auth + dashboard routes
@@ -178,6 +179,18 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Public, unauthenticated runtime config for the dashboard (display only —
+/// never secrets). The SPA needs the configured timezone to render absolute
+/// timestamps correctly; persisting UTC stays untouched.
+#[derive(serde::Serialize)]
+struct PublicConfig {
+    timezone: String,
+}
+
+async fn get_public_config(State(state): State<AppState>) -> Json<PublicConfig> {
+    Json(PublicConfig { timezone: state.config.timezone.to_string() })
 }
 
 async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
