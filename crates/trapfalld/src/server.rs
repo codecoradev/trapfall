@@ -409,10 +409,12 @@ async fn ingest_envelope(
             return StatusCode::BAD_REQUEST;
         }
     };
-    // TODO(#237): Persist transactions — for now, acknowledge and log.
-    // Transaction-only envelopes return 200 OK but data is not yet stored.
-    if !parsed.transactions.is_empty() {
-        tracing::info!("Skipping {} transactions (not yet persisted, see #237)", parsed.transactions.len());
+    // Persist transactions
+    for txn in &parsed.transactions {
+        match store.insert_transaction(&project.id, txn).await {
+            Ok(id) => tracing::info!(id = %id, name = %txn.transaction, "Stored transaction"),
+            Err(e) => tracing::warn!(error = %e, name = %txn.transaction, "Failed to insert transaction"),
+        }
     }
 
     // Persist session aggregates
