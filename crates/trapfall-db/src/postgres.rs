@@ -564,6 +564,23 @@ impl Database for PostgresBackend {
         Ok(count)
     }
 
+    async fn list_environments(&self, project_id: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT environment FROM (
+                SELECT environment FROM release_health
+                WHERE project_id = $1 AND environment IS NOT NULL
+                UNION
+                SELECT environment FROM transactions
+                WHERE project_id = $2 AND environment IS NOT NULL
+            ) AS envs ORDER BY environment",
+        )
+        .bind(project_id)
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(

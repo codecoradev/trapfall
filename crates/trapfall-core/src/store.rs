@@ -188,6 +188,10 @@ impl Store {
         self.db.count_release_health(project_id, release, env).await
     }
 
+    pub async fn list_environments(&self, project_id: &str) -> Result<Vec<String>> {
+        self.db.list_environments(project_id).await
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     pub async fn create_alert_rule(

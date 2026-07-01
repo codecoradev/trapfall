@@ -239,6 +239,37 @@ paths:
         "404":
           description: Not found
 
+  # ── Environments ───────────────────────────────────────────────
+
+  /api/0/projects/{slug}/environments:
+    get:
+      tags: [Projects]
+      summary: List distinct environments for a project
+      description: >
+        Returns distinct `environment` values observed across the project's
+        release-health sessions and transactions, ordered alphabetically.
+        Powers the dynamic environment filter in the dashboard. NULL
+        environments are excluded.
+      operationId: listEnvironments
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Distinct environment values
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                example: ["development", "production", "staging"]
+        "404":
+          description: Project not found
+
   # ── Issues ──────────────────────────────────────────────────────
 
   /api/0/projects/{slug}/issues:

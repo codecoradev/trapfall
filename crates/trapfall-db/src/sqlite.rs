@@ -554,6 +554,23 @@ impl Database for SqliteBackend {
         Ok(count)
     }
 
+    async fn list_environments(&self, project_id: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT environment FROM (
+                SELECT environment FROM release_health
+                WHERE project_id = ? AND environment IS NOT NULL
+                UNION
+                SELECT environment FROM transactions
+                WHERE project_id = ? AND environment IS NOT NULL
+            ) AS envs ORDER BY environment",
+        )
+        .bind(project_id)
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(
@@ -1474,6 +1491,55 @@ mod tests {
         // Filter for non-existent release
         let none = db.count_release_health(&project.id, Some("2.0.0"), None).await.unwrap();
         assert_eq!(none, 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_environments_unions_release_health_and_transactions() {
+        let db = open_backend().await;
+        db.create_project("app", "App").await.unwrap();
+        let project = db.get_project_by_slug("app").await.unwrap().unwrap();
+
+        // release_health contributes `production` + `staging`
+        for env in ["production", "staging"] {
+            let aggregates = trapfall_proto::SessionAggregates {
+                aggregates: vec![trapfall_proto::SessionAggregateItem {
+                    started: "2026-01-01T00:00:00Z".into(),
+                    distinct_id: None,
+                    exited: 1,
+                    errored: 0,
+                    abnormal: 0,
+                    crashed: 0,
+                }],
+                attributes: trapfall_proto::SessionAttributes {
+                    release: "1.0.0".into(),
+                    environment: Some(env.into()),
+                    ip_address: None,
+                    user_agent: None,
+                },
+            };
+            db.insert_release_health(&project.id, &aggregates).await.unwrap();
+        }
+
+        // transactions contribute `development` (verifies UNION across tables)
+        let tx = trapfall_proto::Transaction {
+            event_id: "tx-env-1".into(),
+            level: trapfall_proto::Level::Info,
+            transaction: "GET /".into(),
+            start_timestamp: 1703894474.0,
+            timestamp: 1703894474.5,
+            release: Some("1.0.0".into()),
+            environment: Some("development".into()),
+            spans: vec![],
+            contexts: None,
+            request: None,
+            tags: None,
+            extra: None,
+        };
+        db.insert_transaction(&project.id, &tx).await.unwrap();
+
+        let envs = db.list_environments(&project.id).await.unwrap();
+        // Distinct + sorted alphabetically, NULLs excluded
+        assert_eq!(envs, vec!["development".to_string(), "production".to_string(), "staging".to_string()]);
     }
 
     #[tokio::test]
