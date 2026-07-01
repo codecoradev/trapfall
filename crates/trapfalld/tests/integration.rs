@@ -37,6 +37,13 @@ fn make_envelope_body(exception_type: &str, message: &str) -> Vec<u8> {
     format!("{envelope_header}\n{item_header}\n{event_json}").into_bytes()
 }
 
+fn make_transaction_envelope_body() -> Vec<u8> {
+    let envelope_header = r#"{"event_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
+    let item_header = r#"{"type":"transaction","length":0}"#;
+    let txn_json = r#"{"event_id":"cccccccccccccccccccccccccccccccccccc","level":"info","transaction":"GET /api/health","start_timestamp":1703894474.296,"timestamp":1703894474.891,"release":"1.0.0","environment":"production"}"#;
+    format!("{envelope_header}\n{item_header}\n{txn_json}").into_bytes()
+}
+
 fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
     let (tx, rx) = tokio::sync::mpsc::channel(100);
     // Keep rx alive by spawning a dummy consumer
@@ -736,4 +743,75 @@ async fn change_password_weak_new_returns_400() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn ingest_persists_transactions_and_returns_via_api() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let state = make_state(store.clone(), RateLimiter::default());
+    let app = router(state);
+
+    // Send a transaction-only envelope
+    let body = make_transaction_envelope_body();
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{project_id}/envelope/"))
+        .header("content-type", "application/octet-stream")
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(body))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify transaction is stored
+    let count = store.count_transactions(&project_id).await.unwrap();
+    assert_eq!(count, 1, "expected 1 transaction after ingest");
+
+    let rows = store.list_transactions(&project_id, 10, 0).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name, "GET /api/health");
+    assert_eq!(rows[0].release.as_deref(), Some("1.0.0"));
+    assert_eq!(rows[0].environment.as_deref(), Some("production"));
+}
+
+#[tokio::test]
+async fn store_insert_transaction_directly() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+
+    let txn = trapfall_proto::Transaction {
+        event_id: "e-direct".into(),
+        level: trapfall_proto::Level::Info,
+        transaction: "GET /api/direct".into(),
+        start_timestamp: 1703894474.296,
+        timestamp: 1703894474.891,
+        release: Some("2.0.0".into()),
+        environment: Some("staging".into()),
+        spans: vec![],
+        contexts: None,
+        request: None,
+        tags: None,
+        extra: None,
+    };
+
+    let id = store.insert_transaction(&project_id, &txn).await.unwrap();
+    assert!(!id.is_empty(), "insert_transaction should return an ID");
+
+    let count = store.count_transactions(&project_id).await.unwrap();
+    assert_eq!(count, 1, "direct insert should persist");
+
+    let rows = store.list_transactions(&project_id, 10, 0).await.unwrap();
+    assert_eq!(rows[0].name, "GET /api/direct");
+}
+
+#[tokio::test]
+async fn parse_transaction_envelope() {
+    let body = make_transaction_envelope_body();
+    let parsed = trapfall_ingest::parse_envelope(&body, None);
+    assert!(parsed.is_ok(), "envelope should parse: {:?}", parsed.err());
+    let result = parsed.unwrap();
+    assert_eq!(result.transactions.len(), 1, "expected 1 transaction parsed, got {}", result.transactions.len());
+    assert_eq!(result.transactions[0].transaction, "GET /api/health");
 }

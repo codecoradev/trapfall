@@ -133,6 +133,14 @@ impl Store {
 
     // ── Transactions ──────────────────────────────────────────────────────
 
+    pub async fn insert_transaction(
+        &self,
+        project_id: &str,
+        transaction: &trapfall_proto::Transaction,
+    ) -> Result<String> {
+        self.db.insert_transaction(project_id, transaction).await
+    }
+
     pub async fn list_transactions(
         &self,
         project_id: &str,
