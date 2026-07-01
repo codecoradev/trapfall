@@ -310,6 +310,10 @@ class ApiClient {
 		if (env) path += `&env=${encodeURIComponent(env)}`;
 		return this.get<CrashRateResponse>(path);
 	}
+
+	async listEnvironments(projectSlug: string): Promise<string[]> {
+		return this.get<string[]>(`/projects/${projectSlug}/environments`);
+	}
 }
 
 

@@ -156,6 +156,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/projects/{slug}/search", get(search_issues))
         .route("/api/0/projects/{slug}/release-health/crash-rate", get(get_crash_rate))
         .route("/api/0/projects/{slug}/release-health", get(list_release_health))
+        .route("/api/0/projects/{slug}/environments", get(list_environments))
         .route("/api/0/projects/{slug}/transactions", get(list_transactions))
         .route("/api/0/projects/{slug}/transactions/slowest", get(get_slowest_transactions))
         .route("/api/0/projects/{slug}/transactions/{txn_id}", get(get_transaction))
@@ -893,6 +894,27 @@ async fn list_release_health(
         .collect();
 
     Ok(Json(ListResponse { data, total, page, per_page: limit as u32 }))
+}
+
+/// List distinct environments observed for a project (release_health +
+/// transactions). Powers the dynamic environment filter in the dashboard.
+async fn list_environments(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let store = state.store.clone();
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let envs = store.list_environments(&project.id).await.map_err(|e| {
+        tracing::warn!(error = %e, project_slug = %slug, "list_environments failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(envs))
 }
 
 async fn get_crash_rate(
