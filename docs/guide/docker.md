@@ -4,7 +4,7 @@
 
 ```bash
 docker pull ghcr.io/codecoradev/trapfall:latest
-docker run -d -p 3000:3000 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:latest
+docker run -d -p 9090:9090 -v trapfall-data:/data ghcr.io/codecoradev/trapfall:latest
 ```
 
 ## Image Details
@@ -36,7 +36,7 @@ services:
     container_name: trapfall
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "9090:9090"
     volumes:
       - trapfall-data:/data
     environment:
@@ -45,7 +45,7 @@ services:
       - TRAPFALL_DATABASE_URL=sqlite:/data/trapfall.db
     command: >
       serve
-      --listen 0.0.0.0:3000
+      --listen 0.0.0.0:9090
     healthcheck:
       test: ["CMD", "/trapfall", "healthcheck"]
       interval: 30s
@@ -86,7 +86,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:9090;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

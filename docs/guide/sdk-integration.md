@@ -18,7 +18,7 @@ TrapFall is compatible with the Sentry envelope protocol. Any Sentry SDK can sen
 
 fn main() {
     let _guard = sentry::init((
-        "https://<key>@your-server:3000/<project_id>",
+        "https://<key>@your-server:9090/<project_id>",
         sentry::ClientOptions {
             release: Some(env!("CARGO_PKG_VERSION").into()),
             ..Default::default()
@@ -38,7 +38,7 @@ fn main() {
 import sentry_sdk
 
 sentry_sdk.init(
-    dsn="https://<key>@your-server:3000/<project_id>",
+    dsn="https://<key>@your-server:9090/<project_id>",
     traces_sample_rate=0.0,  # TrapFall is error-only, no tracing
 )
 
@@ -57,7 +57,7 @@ except Exception:
 const Sentry = require("@sentry/node");
 
 Sentry.init({
-  dsn: "https://<key>@your-server:3000/<project_id>",
+  dsn: "https://<key>@your-server:9090/<project_id>",
 });
 
 // Capture manually
@@ -74,7 +74,7 @@ try {
 // npm install @sentry/browser
 
 Sentry.init({
-  dsn: "https://<key>@your-server:3000/<project_id>",
+  dsn: "https://<key>@your-server:9090/<project_id>",
 });
 ```
 
@@ -84,7 +84,7 @@ Sentry.init({
 // pubspec.yaml: sentry_flutter: ^8.0.0
 
 await SentryFlutter.init((options) {
-  options.dsn = 'https://<key>@your-server:3000/<project_id>';
+  options.dsn = 'https://<key>@your-server:9090/<project_id>';
 });
 
 // Capture manually

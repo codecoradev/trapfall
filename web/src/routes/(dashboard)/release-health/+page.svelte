@@ -29,13 +29,25 @@
 	let error = $state('');
 	let filterRelease: string = $state('');
 	let filterEnv: string = $state('');
+	let environments: string[] = $state([]);
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
-	const envOptions = [
-		{ value: '', label: 'All' },
-		{ value: 'production', label: 'Production' },
-		{ value: 'development', label: 'Development' }
-	];
+	// Dynamic environment filter options. Built from distinct environments
+	// observed in the DB (release-health + transactions), plus "All".
+	// The active filter is always present even if not yet loaded from the API
+	// (e.g. restored from a URL param before the fetch resolves).
+	let envOptions = $derived.by(() => {
+		const opts = [{ value: '', label: 'All' }];
+		const seen = new Set<string>();
+		for (const env of environments) {
+			opts.push({ value: env, label: env });
+			seen.add(env);
+		}
+		if (filterEnv && !seen.has(filterEnv)) {
+			opts.push({ value: filterEnv, label: filterEnv });
+		}
+		return opts;
+	});
 
 	let aggregateExited: number = $derived(sessions.reduce((s, r) => s + r.exited, 0));
 	let aggregateErrored: number = $derived(sessions.reduce((s, r) => s + r.errored, 0));
@@ -53,6 +65,15 @@
 			);
 		} catch {
 			crashRate = null;
+		}
+	}
+
+	async function loadEnvironments() {
+		if (!selectedProject) return;
+		try {
+			environments = await api.listEnvironments(selectedProject);
+		} catch {
+			environments = [];
 		}
 	}
 
@@ -90,6 +111,7 @@
 	}
 
 	function loadData() {
+		loadEnvironments();
 		loadCrashRate();
 		loadSessions();
 	}

@@ -5,6 +5,7 @@ pub mod attachment_storage;
 pub mod auth;
 pub mod config;
 pub mod digest;
+pub mod log_time;
 pub mod metrics;
 pub mod migrate;
 pub mod rate_limit;

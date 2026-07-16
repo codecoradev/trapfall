@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Snippet } from 'svelte';
+import { formatInTimezone, activeTimezone } from './timezone';
 
 // ── Shadcn UI helpers ─────────────────────────────────────────────────
 
@@ -82,7 +83,9 @@ export function statusTextClass(status: string): string {
  */
 export function formatTime(iso: string): string {
 	if (!iso) return '';
-	return new Date(iso).toLocaleString();
+	// Use the active display timezone from the store (server-configured),
+	// falling back to the browser zone if the store hasn't loaded yet.
+	return formatInTimezone(iso, activeTimezone());
 }
 
 /**

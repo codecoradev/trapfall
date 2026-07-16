@@ -48,7 +48,7 @@ impl Database for PostgresBackend {
     // ── Projects ───────────────────────────────────────────────────────
 
     async fn create_project(&self, slug: &str, name: &str) -> Result<Project> {
-        self.create_project_with_host(slug, name, "localhost:3000").await
+        self.create_project_with_host(slug, name, "localhost:9090").await
     }
 
     async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {
@@ -562,6 +562,23 @@ impl Database for PostgresBackend {
 
         let count = q.fetch_one(&self.pool).await?;
         Ok(count)
+    }
+
+    async fn list_environments(&self, project_id: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT environment FROM (
+                SELECT environment FROM release_health
+                WHERE project_id = $1 AND environment IS NOT NULL
+                UNION
+                SELECT environment FROM transactions
+                WHERE project_id = $2 AND environment IS NOT NULL
+            ) AS envs ORDER BY environment",
+        )
+        .bind(project_id)
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(e,)| e).collect())
     }
 
     // ── Alert Rules ────────────────────────────────────────────────────

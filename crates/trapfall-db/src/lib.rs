@@ -258,6 +258,11 @@ pub trait Database: Send + Sync {
     ) -> Result<Vec<crate::common::ReleaseHealthRow>>;
     async fn count_release_health(&self, project_id: &str, release: Option<&str>, env: Option<&str>) -> Result<i64>;
 
+    /// List distinct environment values observed for a project, drawn from
+    /// both `release_health` and `transactions` tables. NULL environments
+    /// are excluded. Ordered alphabetically.
+    async fn list_environments(&self, project_id: &str) -> Result<Vec<String>>;
+
     // ── Alert Rules ────────────────────────────────────────────────────
 
     async fn create_alert_rule(

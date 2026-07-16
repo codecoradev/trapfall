@@ -16,7 +16,7 @@ info:
     name: Apache-2.0
 
 servers:
-  - url: http://localhost:3000
+  - url: http://localhost:9090
     description: Local development
 
 tags:
@@ -62,6 +62,28 @@ paths:
       responses:
         "200":
           description: Prometheus formatted metrics
+
+  /api/0/config:
+    get:
+      tags: [System]
+      summary: Public runtime config (display only)
+      description: >
+        Unauthenticated runtime config consumed by the dashboard. Returns the
+        configured display timezone (IANA name). No secrets. All persisted
+        timestamps remain UTC; this value only affects display formatting.
+      operationId: getPublicConfig
+      responses:
+        "200":
+          description: Public runtime configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  timezone:
+                    type: string
+                    example: Asia/Jakarta
+                    description: IANA timezone name used for display (UTC default)
 
   # ── Setup ────────────────────────────────────────────────────────
 
@@ -238,6 +260,37 @@ paths:
                 $ref: "#/components/schemas/Project"
         "404":
           description: Not found
+
+  # ── Environments ───────────────────────────────────────────────
+
+  /api/0/projects/{slug}/environments:
+    get:
+      tags: [Projects]
+      summary: List distinct environments for a project
+      description: >
+        Returns distinct `environment` values observed across the project's
+        release-health sessions and transactions, ordered alphabetically.
+        Powers the dynamic environment filter in the dashboard. NULL
+        environments are excluded.
+      operationId: listEnvironments
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Distinct environment values
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                example: ["development", "production", "staging"]
+        "404":
+          description: Project not found
 
   # ── Issues ──────────────────────────────────────────────────────
 

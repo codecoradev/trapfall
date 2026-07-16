@@ -133,6 +133,14 @@ impl Store {
 
     // ── Transactions ──────────────────────────────────────────────────────
 
+    pub async fn insert_transaction(
+        &self,
+        project_id: &str,
+        transaction: &trapfall_proto::Transaction,
+    ) -> Result<String> {
+        self.db.insert_transaction(project_id, transaction).await
+    }
+
     pub async fn list_transactions(
         &self,
         project_id: &str,
@@ -186,6 +194,10 @@ impl Store {
         env: Option<&str>,
     ) -> Result<i64> {
         self.db.count_release_health(project_id, release, env).await
+    }
+
+    pub async fn list_environments(&self, project_id: &str) -> Result<Vec<String>> {
+        self.db.list_environments(project_id).await
     }
 
     // ── Alert Rules ────────────────────────────────────────────────────

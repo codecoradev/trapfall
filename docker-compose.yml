@@ -7,17 +7,18 @@ services:
     container_name: trapfall
     restart: unless-stopped
     ports:
-      - "${TRAPFALL_PORT:-3000}:3000"
+      - "${TRAPFALL_PORT:-9090}:9090"
     volumes:
       - trapfall-data:/data
     environment:
       - RUST_LOG=${RUST_LOG:-trapfall=info}
       - TRAPFALL_SECURE_COOKIE=${TRAPFALL_SECURE_COOKIE:-false}
+      - TRAPFALL_TIMEZONE=${TRAPFALL_TIMEZONE:-UTC}
       # Database URL: sqlite path (default) or postgres://... (requires postgres feature)
       - TRAPFALL_DATABASE_URL=${TRAPFALL_DATABASE_URL:-sqlite:/data/trapfall.db}
     command: >
       serve
-      --listen 0.0.0.0:3000
+      --listen 0.0.0.0:9090
     healthcheck:
       test: ["CMD", "/trapfall", "healthcheck"]
       interval: 30s

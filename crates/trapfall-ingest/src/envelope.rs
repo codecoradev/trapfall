@@ -143,27 +143,27 @@ fn parse_envelope_binary(data: &[u8]) -> Result<ParsedEnvelope> {
             };
 
             match hdr.item_type.as_str() {
-                "event" => {
-                    if let Ok(event) = serde_json::from_str::<Event>(body_text) {
-                        result.events.push(event);
+                "event" => match serde_json::from_str::<Event>(body_text) {
+                    Ok(event) => result.events.push(event),
+                    Err(e) => tracing::warn!(item = "event", error = %e, "dropping event: deserialize failed"),
+                },
+                "transaction" => match serde_json::from_str::<Transaction>(body_text) {
+                    Ok(txn) => result.transactions.push(txn),
+                    Err(e) => {
+                        tracing::warn!(item = "transaction", error = %e, "dropping transaction: deserialize failed")
                     }
-                }
-                "transaction" => {
-                    if let Ok(txn) = serde_json::from_str::<Transaction>(body_text) {
-                        result.transactions.push(txn);
+                },
+                "session" => match serde_json::from_str::<SessionUpdate>(body_text) {
+                    Ok(session) => result.session_updates.push(session),
+                    Err(e) => tracing::warn!(item = "session", error = %e, "dropping session: deserialize failed"),
+                },
+                "sessions" => match serde_json::from_str::<SessionAggregates>(body_text) {
+                    Ok(aggregates) => result.session_aggregates.push(aggregates),
+                    Err(e) => {
+                        tracing::warn!(item = "sessions", error = %e, "dropping session aggregates: deserialize failed")
                     }
-                }
-                "session" => {
-                    if let Ok(session) = serde_json::from_str::<SessionUpdate>(body_text) {
-                        result.session_updates.push(session);
-                    }
-                }
-                "sessions" => {
-                    if let Ok(aggregates) = serde_json::from_str::<SessionAggregates>(body_text) {
-                        result.session_aggregates.push(aggregates);
-                    }
-                }
-                _ => {} // Ignore unknown item types.
+                },
+                _ => tracing::debug!(item_type = %hdr.item_type, "ignoring unknown envelope item type"),
             }
         }
     }
@@ -296,6 +296,33 @@ mod tests {
         assert_eq!(result.events.len(), 1);
         assert_eq!(result.events[0].event_id, "abc123");
         assert_eq!(result.events[0].message.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn parse_event_message_as_object_sentry_dart_format() {
+        // Modern SDKs (Dart/Flutter, JS, etc.) send `message` as the
+        // Sentry Message interface object, not a plain string. Without the
+        // custom deserializer this whole event is silently dropped.
+        let envelope = r#"{"event_id":"abc123","sent_at":"2026-07-01T00:00:00Z"}
+{"type":"event"}
+{"event_id":"abc123","message":{"formatted":"Null check operator used on a null value","message":"%s"},"level":"error","platform":"dart"}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert_eq!(result.events.len(), 1, "message object must not drop the event");
+        assert_eq!(result.events[0].event_id, "abc123");
+        assert_eq!(result.events[0].message.as_deref(), Some("Null check operator used on a null value"));
+    }
+
+    #[test]
+    fn parse_event_message_object_falls_back_to_message_key() {
+        // When `formatted` is absent, fall back to the `message` template.
+        let envelope = r#"{"event_id":"abc123","sent_at":"2026-07-01T00:00:00Z"}
+{"type":"event"}
+{"event_id":"abc123","message":{"message":"template only"},"level":"error"}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].message.as_deref(), Some("template only"));
     }
 
     #[test]

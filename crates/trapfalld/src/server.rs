@@ -134,6 +134,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
+        .route("/api/0/config", get(get_public_config))
         // Public ingest API (DSN key auth)
         .route("/api/{project_id}/envelope/", post(ingest_envelope))
         // Auth + dashboard routes
@@ -156,6 +157,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/projects/{slug}/search", get(search_issues))
         .route("/api/0/projects/{slug}/release-health/crash-rate", get(get_crash_rate))
         .route("/api/0/projects/{slug}/release-health", get(list_release_health))
+        .route("/api/0/projects/{slug}/environments", get(list_environments))
         .route("/api/0/projects/{slug}/transactions", get(list_transactions))
         .route("/api/0/projects/{slug}/transactions/slowest", get(get_slowest_transactions))
         .route("/api/0/projects/{slug}/transactions/{txn_id}", get(get_transaction))
@@ -177,6 +179,18 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Public, unauthenticated runtime config for the dashboard (display only —
+/// never secrets). The SPA needs the configured timezone to render absolute
+/// timestamps correctly; persisting UTC stays untouched.
+#[derive(serde::Serialize)]
+struct PublicConfig {
+    timezone: String,
+}
+
+async fn get_public_config(State(state): State<AppState>) -> Json<PublicConfig> {
+    Json(PublicConfig { timezone: state.config.timezone.to_string() })
 }
 
 async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<trapfall_proto::Project>>, StatusCode> {
@@ -205,11 +219,11 @@ async fn create_project(
     let slug = req.slug.unwrap_or_else(|| req.name.to_lowercase().replace(' ', "-"));
     // Prefer configured `public_url` (TRAPFALL_PUBLIC_URL) for DSN generation.
     // Fall back to the request Host header so local dev keeps working without
-    // extra config (e.g. user accesses via http://localhost:3000).
+    // extra config (e.g. user accesses via http://localhost:9090).
     let host = state
         .config
         .dsn_host()
-        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:3000").to_string());
+        .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:9090").to_string());
     let project = store.create_project_with_host(&slug, &req.name, &host).await.map_err(|e| {
         tracing::warn!("Create project failed: {e}");
         StatusCode::CONFLICT
@@ -395,10 +409,12 @@ async fn ingest_envelope(
             return StatusCode::BAD_REQUEST;
         }
     };
-    // TODO(#237): Persist transactions — for now, acknowledge and log.
-    // Transaction-only envelopes return 200 OK but data is not yet stored.
-    if !parsed.transactions.is_empty() {
-        tracing::info!("Skipping {} transactions (not yet persisted, see #237)", parsed.transactions.len());
+    // Persist transactions
+    for txn in &parsed.transactions {
+        match store.insert_transaction(&project.id, txn).await {
+            Ok(id) => tracing::info!(id = %id, name = %txn.transaction, "Stored transaction"),
+            Err(e) => tracing::warn!(error = %e, name = %txn.transaction, "Failed to insert transaction"),
+        }
     }
 
     // Persist session aggregates
@@ -893,6 +909,27 @@ async fn list_release_health(
         .collect();
 
     Ok(Json(ListResponse { data, total, page, per_page: limit as u32 }))
+}
+
+/// List distinct environments observed for a project (release_health +
+/// transactions). Powers the dynamic environment filter in the dashboard.
+async fn list_environments(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let store = state.store.clone();
+    let project = store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let envs = store.list_environments(&project.id).await.map_err(|e| {
+        tracing::warn!(error = %e, project_slug = %slug, "list_environments failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(envs))
 }
 
 async fn get_crash_rate(

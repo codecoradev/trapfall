@@ -28,6 +28,11 @@ export interface SetupStatus {
 	needs_setup: boolean;
 }
 
+export interface PublicConfig {
+	/** IANA timezone name, e.g. "Asia/Jakarta" or "UTC". Display only. */
+	timezone: string;
+}
+
 export interface SetupResponse {
 	user: UserInfo;
 	project_slug: string;
@@ -309,6 +314,14 @@ class ApiClient {
 		if (release) path += `?release=${encodeURIComponent(release)}`;
 		if (env) path += `&env=${encodeURIComponent(env)}`;
 		return this.get<CrashRateResponse>(path);
+	}
+
+	async listEnvironments(projectSlug: string): Promise<string[]> {
+		return this.get<string[]>(`/projects/${projectSlug}/environments`);
+	}
+
+	async getPublicConfig(): Promise<PublicConfig> {
+		return this.get<PublicConfig>('/config');
 	}
 }
 

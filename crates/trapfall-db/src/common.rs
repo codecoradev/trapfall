@@ -217,8 +217,8 @@ pub fn extract_dsn_key(dsn: &str) -> String {
 pub fn extract_dsn_host(dsn: &str) -> String {
     dsn.split('@')
         .nth(1)
-        .map(|s| s.split('/').next().unwrap_or("localhost:3000"))
-        .unwrap_or("localhost:3000")
+        .map(|s| s.split('/').next().unwrap_or("localhost:9090"))
+        .unwrap_or("localhost:9090")
         .to_string()
 }
 
