@@ -8,6 +8,7 @@
     "preview": "vitepress preview"
   },
   "devDependencies": {
+    "@codecora/theme": "github:codecoradev/codecora-theme",
     "vitepress": "^1.6.0"
   }
 }
