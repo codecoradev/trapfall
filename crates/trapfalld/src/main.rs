@@ -227,10 +227,11 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
         }
     });
 
-    // Retention task
+    // Retention task — configurable via TRAPFALL_RETENTION_DAYS
     let retention_handle = {
         let store_clone = store.clone();
-        tokio::spawn(async move { trapfalld::retention::run_retention(&store_clone, None).await })
+        let days = config.retention_days;
+        tokio::spawn(async move { trapfalld::retention::run_retention(&store_clone, Some(days)).await })
     };
 
     // App state

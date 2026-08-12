@@ -59,6 +59,11 @@ pub struct Config {
     /// (`TRAPFALL_MAX_BODY_MB`, default `10` = 10 MB).
     #[serde(default = "default_max_body_bytes")]
     pub max_body_bytes: usize,
+    /// Event retention period in days (`TRAPFALL_RETENTION_DAYS`, default `90`).
+    /// Events older than this are automatically purged by the hourly
+    /// retention task.
+    #[serde(default = "default_retention_days")]
+    pub retention_days: i64,
 }
 
 fn default_secure_cookie() -> bool {
@@ -78,6 +83,11 @@ fn default_max_ingest_body_bytes() -> usize {
 /// Default max general body size: 10 MB.
 fn default_max_body_bytes() -> usize {
     10 * 1024 * 1024
+}
+
+/// Default retention period: 90 days.
+fn default_retention_days() -> i64 {
+    90
 }
 
 impl Config {
@@ -130,6 +140,7 @@ impl Config {
             timezone: parse_timezone(),
             max_ingest_body_bytes: parse_max_ingest_body_bytes(),
             max_body_bytes: parse_max_body_bytes(),
+            retention_days: parse_retention_days(),
         }
     }
 
@@ -256,6 +267,27 @@ fn parse_max_body_bytes() -> usize {
     }
 }
 
+/// Parse `TRAPFALL_RETENTION_DAYS` as days (i64).
+/// Default: 90 days. Minimum: 1 day. Invalid values fall back to default.
+fn parse_retention_days() -> i64 {
+    match std::env::var("TRAPFALL_RETENTION_DAYS") {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            match trimmed.parse::<i64>() {
+                Ok(days) if days >= 1 => days,
+                _ => {
+                    tracing::warn!(
+                        value = %trimmed,
+                        "Invalid TRAPFALL_RETENTION_DAYS — falling back to 90 days (minimum 1 day)."
+                    );
+                    default_retention_days()
+                }
+            }
+        }
+        Err(_) => default_retention_days(),
+    }
+}
+
 /// Normalize a user-provided public-URL value into a bare `host[:port]`.
 ///
 /// Accepts all of: `https://trapfall.example.com`,
@@ -284,6 +316,7 @@ mod tests {
             timezone: "UTC".to_string(),
             max_ingest_body_bytes: default_max_ingest_body_bytes(),
             max_body_bytes: default_max_body_bytes(),
+            retention_days: default_retention_days(),
         }
     }
 
@@ -358,5 +391,44 @@ mod tests {
     fn ingest_limit_smaller_than_general() {
         let cfg = base_cfg();
         assert!(cfg.max_ingest_body_bytes < cfg.max_body_bytes, "ingest limit must be tighter than general API limit");
+    }
+
+    #[test]
+    fn retention_days_default() {
+        assert_eq!(default_retention_days(), 90);
+        let cfg = base_cfg();
+        assert_eq!(cfg.retention_days, 90);
+    }
+
+    #[test]
+    fn retention_days_custom_env() {
+        // SAFETY: single-threaded test, no other code reads this env var concurrently.
+        unsafe {
+            std::env::set_var("TRAPFALL_RETENTION_DAYS", "30");
+        }
+        assert_eq!(parse_retention_days(), 30);
+        unsafe {
+            std::env::remove_var("TRAPFALL_RETENTION_DAYS");
+        }
+    }
+
+    #[test]
+    fn retention_days_invalid_falls_back() {
+        // SAFETY: single-threaded test, no other code reads this env var concurrently.
+        unsafe {
+            std::env::set_var("TRAPFALL_RETENTION_DAYS", "abc");
+        }
+        assert_eq!(parse_retention_days(), 90);
+        unsafe {
+            std::env::set_var("TRAPFALL_RETENTION_DAYS", "0");
+        }
+        assert_eq!(parse_retention_days(), 90); // min 1 day
+        unsafe {
+            std::env::set_var("TRAPFALL_RETENTION_DAYS", "-5");
+        }
+        assert_eq!(parse_retention_days(), 90);
+        unsafe {
+            std::env::remove_var("TRAPFALL_RETENTION_DAYS");
+        }
     }
 }
