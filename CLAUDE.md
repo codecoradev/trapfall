@@ -21,13 +21,11 @@ TrapFall is a lightweight, self-hosted error capture engine written in Rust with
 | Crate | Purpose |
 |-------|---------|
 | `trapfall-proto` | Wire types (Event, Issue, Fingerprint) |
-| `trapfall-core` | Storage trait, config, auth, fingerprint |
-| `trapfall-ingest` | HTTP handler, envelope parser, digest loop |
-| `trapfall-search` | LIKE + trigram search module |
-| `trapfall-alert` | Configurable alerting rules engine |
+| `trapfall-core` | Store abstraction, fingerprinting (Blake3) |
+| `trapfall-db` | Data layer (SQLite + Postgres, migrations) |
+| `trapfall-ingest` | Envelope parser (Sentry SDK format) |
 | `trapfall-mcp` | MCP server via stdio (JSON-RPC 2.0) |
-| `trapfall-dashboard` | Embedded SPA (SvelteKit) |
-| `trapfalld` | Daemon binary (CLI: `trapfall`) |
+| `trapfalld` | Daemon binary (CLI: `trapfall`) — HTTP, auth, alerts, search, SPA |
 
 ## Rust Style
 

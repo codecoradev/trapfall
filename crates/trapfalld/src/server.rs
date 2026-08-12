@@ -709,7 +709,7 @@ async fn search_issues(
     let page = query.page.unwrap_or(1).max(1);
     let offset = (page - 1) * per_page;
 
-    let total = trapfall_search::count_search_issues(
+    let total = crate::search::count_search_issues(
         &state.store,
         &query.q,
         Some(&project.id),
@@ -722,7 +722,7 @@ async fn search_issues(
         0
     });
 
-    match trapfall_search::search_issues(
+    match crate::search::search_issues(
         &state.store,
         &query.q,
         Some(&project.id),

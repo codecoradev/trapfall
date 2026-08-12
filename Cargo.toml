@@ -5,10 +5,7 @@ members = [
     "crates/trapfall-db",
     "crates/trapfall-core",
     "crates/trapfall-ingest",
-    "crates/trapfall-search",
-    "crates/trapfall-alert",
     "crates/trapfall-mcp",
-    "crates/trapfall-dashboard",
     "crates/trapfalld",
 ]
 
@@ -83,10 +80,7 @@ trapfall_proto = { path = "crates/trapfall-proto" }
 trapfall_db = { path = "crates/trapfall-db" }
 trapfall_core = { path = "crates/trapfall-core" }
 trapfall_ingest = { path = "crates/trapfall-ingest" }
-trapfall_search = { path = "crates/trapfall-search" }
-trapfall_alert = { path = "crates/trapfall-alert" }
 trapfall_mcp = { path = "crates/trapfall-mcp" }
-trapfall_dashboard = { path = "crates/trapfall-dashboard" }
 
 [profile.release]
 opt-level = "z"

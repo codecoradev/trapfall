@@ -2979,19 +2979,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trapfall_alert"
-version = "0.2.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
- "tracing",
- "trapfall_core",
- "trapfall_proto",
-]
-
-[[package]]
 name = "trapfall_core"
 version = "0.2.0"
 dependencies = [
@@ -3009,21 +2996,6 @@ dependencies = [
  "trapfall_db",
  "trapfall_proto",
  "uuid",
-]
-
-[[package]]
-name = "trapfall_dashboard"
-version = "0.2.0"
-dependencies = [
- "axum",
- "rust-embed",
- "serde",
- "serde_json",
- "tower",
- "tower-http",
- "tracing",
- "trapfall_core",
- "trapfall_proto",
 ]
 
 [[package]]
@@ -3073,7 +3045,6 @@ dependencies = [
  "trapfall_core",
  "trapfall_db",
  "trapfall_proto",
- "trapfall_search",
 ]
 
 [[package]]
@@ -3085,18 +3056,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "uuid",
-]
-
-[[package]]
-name = "trapfall_search"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "sqlx",
- "tokio",
- "trapfall_core",
- "trapfall_db",
- "trapfall_proto",
 ]
 
 [[package]]
@@ -3121,14 +3080,11 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "trapfall_alert",
  "trapfall_core",
- "trapfall_dashboard",
  "trapfall_db",
  "trapfall_ingest",
  "trapfall_mcp",
  "trapfall_proto",
- "trapfall_search",
  "url",
  "uuid",
 ]

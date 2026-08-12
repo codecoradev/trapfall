@@ -19,10 +19,7 @@ trapfall_proto = { workspace = true }
 trapfall_core = { workspace = true }
 trapfall_db = { workspace = true }
 trapfall_ingest = { workspace = true }
-trapfall_search = { workspace = true }
-trapfall_alert = { workspace = true }
 trapfall_mcp = { workspace = true }
-trapfall_dashboard = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

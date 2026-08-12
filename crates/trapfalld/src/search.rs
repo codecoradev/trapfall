@@ -1,10 +1,7 @@
-//! Search module — LIKE + trigram substring matching for issues.
+//! Search module — substring matching for issues.
 //!
 //! Thin wrapper over [`Database::search_issues`] and
 //! [`Database::count_search_issues`]. All SQL lives in the backend.
-//!
-//! Kept as a separate crate for organisational clarity and future
-//! search-backend extensions (e.g. FTS5, Postgres trigram).
 
 use anyhow::Result;
 use trapfall_core::Store;
