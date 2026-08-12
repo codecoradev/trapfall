@@ -135,8 +135,11 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/metrics", get(crate::metrics::metrics))
         .route("/api/0/config", get(get_public_config))
-        // Public ingest API (DSN key auth)
-        .route("/api/{project_id}/envelope/", post(ingest_envelope))
+        // Public ingest API (DSN key auth) — tighter body limit
+        .route(
+            "/api/{project_id}/envelope/",
+            post(ingest_envelope).layer(DefaultBodyLimit::max(state.config.max_ingest_body_bytes)),
+        )
         // Auth + dashboard routes
         .route("/api/0/setup", get(crate::auth::setup_status).post(crate::auth::setup))
         .route("/api/0/auth/login", post(crate::auth::login))
@@ -168,7 +171,7 @@ pub fn router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), crate::auth::require_auth))
         .fallback(crate::spa::spa_handler)
         .layer(build_cors_layer(&state.config))
-        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10 MB max body size (DoS protection)
+        .layer(DefaultBodyLimit::max(state.config.max_body_bytes))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
         // Swagger UI — stateless, merged after with_state

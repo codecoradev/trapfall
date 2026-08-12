@@ -46,6 +46,19 @@ pub struct Config {
     /// Example: `https://trapfall.example.com` or `http://localhost:9090`.
     #[serde(default)]
     pub public_url: Option<String>,
+    /// Maximum request body size in bytes for the ingest endpoint
+    /// (`TRAPFALL_MAX_INGEST_BODY_MB`, default `2` = 2 MB).
+    ///
+    /// Sentry SDK envelopes are typically <100 KB. A 2 MB ceiling handles
+    /// large stack traces + breadcrumb payloads with margin while blocking
+    /// trivial memory-exhaustion DoS. Set higher only if your clients send
+    /// large attachments inline.
+    #[serde(default = "default_max_ingest_body_bytes")]
+    pub max_ingest_body_bytes: usize,
+    /// Maximum request body size in bytes for general API routes
+    /// (`TRAPFALL_MAX_BODY_MB`, default `10` = 10 MB).
+    #[serde(default = "default_max_body_bytes")]
+    pub max_body_bytes: usize,
 }
 
 fn default_secure_cookie() -> bool {
@@ -55,6 +68,16 @@ fn default_secure_cookie() -> bool {
 /// Default display timezone: UTC.
 fn default_timezone() -> String {
     "UTC".to_string()
+}
+
+/// Default max ingest body size: 2 MB.
+fn default_max_ingest_body_bytes() -> usize {
+    2 * 1024 * 1024
+}
+
+/// Default max general body size: 10 MB.
+fn default_max_body_bytes() -> usize {
+    10 * 1024 * 1024
 }
 
 impl Config {
@@ -105,6 +128,8 @@ impl Config {
             secure_cookie: parse_secure_cookie(),
             public_url: parse_public_url(),
             timezone: parse_timezone(),
+            max_ingest_body_bytes: parse_max_ingest_body_bytes(),
+            max_body_bytes: parse_max_body_bytes(),
         }
     }
 
@@ -189,6 +214,48 @@ pub fn parse_timezone() -> String {
     }
 }
 
+/// Parse `TRAPFALL_MAX_INGEST_BODY_MB` as megabytes → bytes.
+/// Default: 2 MB. Minimum: 1 MB. Invalid values fall back to default.
+fn parse_max_ingest_body_bytes() -> usize {
+    match std::env::var("TRAPFALL_MAX_INGEST_BODY_MB") {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            match trimmed.parse::<usize>() {
+                Ok(mb) if mb >= 1 => mb * 1024 * 1024,
+                _ => {
+                    tracing::warn!(
+                        value = %trimmed,
+                        "Invalid TRAPFALL_MAX_INGEST_BODY_MB — falling back to 2 MB (minimum 1 MB)."
+                    );
+                    default_max_ingest_body_bytes()
+                }
+            }
+        }
+        Err(_) => default_max_ingest_body_bytes(),
+    }
+}
+
+/// Parse `TRAPFALL_MAX_BODY_MB` as megabytes → bytes.
+/// Default: 10 MB. Minimum: 1 MB. Invalid values fall back to default.
+fn parse_max_body_bytes() -> usize {
+    match std::env::var("TRAPFALL_MAX_BODY_MB") {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            match trimmed.parse::<usize>() {
+                Ok(mb) if mb >= 1 => mb * 1024 * 1024,
+                _ => {
+                    tracing::warn!(
+                        value = %trimmed,
+                        "Invalid TRAPFALL_MAX_BODY_MB — falling back to 10 MB (minimum 1 MB)."
+                    );
+                    default_max_body_bytes()
+                }
+            }
+        }
+        Err(_) => default_max_body_bytes(),
+    }
+}
+
 /// Normalize a user-provided public-URL value into a bare `host[:port]`.
 ///
 /// Accepts all of: `https://trapfall.example.com`,
@@ -215,6 +282,8 @@ mod tests {
             secure_cookie: true,
             public_url: None,
             timezone: "UTC".to_string(),
+            max_ingest_body_bytes: default_max_ingest_body_bytes(),
+            max_body_bytes: default_max_body_bytes(),
         }
     }
 
@@ -277,5 +346,17 @@ mod tests {
         assert_eq!(cfg.cookie_secure_flag(), "Secure");
         cfg.secure_cookie = false;
         assert_eq!(cfg.cookie_secure_flag(), "");
+    }
+
+    #[test]
+    fn default_body_limits_sane() {
+        assert_eq!(default_max_ingest_body_bytes(), 2 * 1024 * 1024);
+        assert_eq!(default_max_body_bytes(), 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn ingest_limit_smaller_than_general() {
+        let cfg = base_cfg();
+        assert!(cfg.max_ingest_body_bytes < cfg.max_body_bytes, "ingest limit must be tighter than general API limit");
     }
 }
