@@ -502,7 +502,7 @@ async fn ingest_envelope(
 
 // ── Issue / Event Handlers ──────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct ListIssuesQuery {
     #[serde(default = "default_page")]
     page: u32,
@@ -1053,5 +1053,78 @@ fn build_cors_layer(config: &Config) -> CorsLayer {
     } else {
         let origins: Vec<_> = config.cors_origins.iter().filter_map(|o| o.parse().ok()).collect();
         CorsLayer::new().allow_origin(origins).allow_methods(allow_methods).allow_headers(allow_headers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_page_is_one() {
+        assert_eq!(default_page(), 1);
+    }
+
+    #[test]
+    fn default_per_page_is_twenty() {
+        assert_eq!(default_per_page(), 20);
+    }
+
+    #[test]
+    fn default_slowest_limit_is_five() {
+        assert_eq!(default_slowest_limit(), 5);
+    }
+
+    #[test]
+    fn cors_layer_allows_all_when_empty_origins() {
+        // When cors_origins is empty, the server warns and allows all.
+        // We verify the Config is constructed correctly — the CorsLayer
+        // itself is opaque, but we can check the config path.
+        let config = Config { cors_origins: vec![], ..crate::config::tests_base_cfg() };
+        assert!(config.cors_origins.is_empty());
+        // build_cors_layer should not panic
+        let _layer = build_cors_layer(&config);
+    }
+
+    #[test]
+    fn cors_layer_with_specific_origins() {
+        let config = Config {
+            cors_origins: vec!["https://example.com".to_string(), "https://app.example.com".to_string()],
+            ..crate::config::tests_base_cfg()
+        };
+        assert_eq!(config.cors_origins.len(), 2);
+        let _layer = build_cors_layer(&config);
+    }
+
+    #[test]
+    fn list_issues_query_defaults() {
+        // Verify Default impl produces sane defaults
+        let query = ListIssuesQuery::default();
+        assert_eq!(query.page, 0); // u32::default() = 0 (axum fills serde defaults)
+        assert_eq!(query.per_page, 0);
+        assert_eq!(query.status, None);
+        assert_eq!(query.level, None);
+    }
+
+    #[test]
+    fn list_issues_query_construct() {
+        // Verify struct can be constructed with test values
+        let query = ListIssuesQuery {
+            page: 3,
+            per_page: 50,
+            status: Some("resolved".to_string()),
+            level: Some("error".to_string()),
+        };
+        assert_eq!(query.page, 3);
+        assert_eq!(query.per_page, 50);
+        assert_eq!(query.status.as_deref(), Some("resolved"));
+        assert_eq!(query.level.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn public_config_serializes_timezone() {
+        let pc = PublicConfig { timezone: "Asia/Jakarta".to_string() };
+        let json = serde_json::to_string(&pc).unwrap();
+        assert!(json.contains("Asia/Jakarta"));
     }
 }

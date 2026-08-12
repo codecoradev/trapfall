@@ -303,21 +303,26 @@ fn normalize_dsn_host(raw: &str) -> String {
 }
 
 #[cfg(test)]
+pub(crate) fn tests_base_cfg() -> Config {
+    Config {
+        db_path: PathBuf::from("/tmp/test-trapfall.db"),
+        listen_addr: "0.0.0.0:9090".into(),
+        cors_origins: vec![],
+        secure_cookie: true,
+        public_url: None,
+        timezone: "UTC".to_string(),
+        max_ingest_body_bytes: default_max_ingest_body_bytes(),
+        max_body_bytes: default_max_body_bytes(),
+        retention_days: default_retention_days(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn base_cfg() -> Config {
-        Config {
-            db_path: PathBuf::from("/tmp/test-trapfall.db"),
-            listen_addr: "0.0.0.0:9090".into(),
-            cors_origins: vec![],
-            secure_cookie: true,
-            public_url: None,
-            timezone: "UTC".to_string(),
-            max_ingest_body_bytes: default_max_ingest_body_bytes(),
-            max_body_bytes: default_max_body_bytes(),
-            retention_days: default_retention_days(),
-        }
+        tests_base_cfg()
     }
 
     #[test]
