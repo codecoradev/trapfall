@@ -402,7 +402,7 @@ async fn ingest_envelope(
     tracing::info!("Encoding: {:?}", encoding);
 
     // Parse envelope
-    let parsed = match parse_envelope(&body, encoding) {
+    let mut parsed = match parse_envelope(&body, encoding) {
         Ok(e) => {
             tracing::info!("Parsed {} events, {} transactions", e.events.len(), e.transactions.len());
             e
@@ -412,6 +412,15 @@ async fn ingest_envelope(
             return StatusCode::BAD_REQUEST;
         }
     };
+
+    // Scrub PII before persistence (UU PDP compliance)
+    for txn in parsed.transactions.iter_mut() {
+        crate::scrub::scrub_transaction(txn);
+    }
+    for evt in parsed.events.iter_mut() {
+        crate::scrub::scrub_event(evt);
+    }
+
     // Persist transactions
     for txn in &parsed.transactions {
         match store.insert_transaction(&project.id, txn).await {
