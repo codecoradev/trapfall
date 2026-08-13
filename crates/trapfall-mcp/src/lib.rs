@@ -304,7 +304,9 @@ async fn tool_search_issues(args: Value, store: &Store) -> Result<Value, String>
         None
     };
 
-    let issues = trapfall_search::search_issues(store, query, project_id.as_deref(), None, None, limit, 0)
+    let issues = store
+        .backend()
+        .search_issues(query, project_id.as_deref(), None, None, limit, 0)
         .await
         .map_err(|e| e.to_string())?;
 

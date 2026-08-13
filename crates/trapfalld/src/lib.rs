@@ -10,6 +10,8 @@ pub mod metrics;
 pub mod migrate;
 pub mod rate_limit;
 pub mod retention;
+pub mod scrub;
+pub mod search;
 pub mod server;
 pub mod spa;
 pub mod swagger;

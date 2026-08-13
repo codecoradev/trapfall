@@ -45,13 +45,11 @@ cargo test --workspace
 ```
 crates/
 ├── trapfall-proto/    # Shared types (Issue, Event, Level, etc.)
-├── trapfall-core/     # Store (SQLite), migrations, helpers
-├── trapfall-ingest/   # Envelope parser
-├── trapfall-search/   # LIKE-based search
-├── trapfall-alert/    # Alert engine + webhook dispatch
+├── trapfall-core/     # Store abstraction, fingerprinting (Blake3)
+├── trapfall-db/       # Data layer (SQLite + Postgres, migrations)
+├── trapfall-ingest/   # Envelope parser (Sentry SDK format)
 ├── trapfall-mcp/      # MCP server (stdio JSON-RPC)
-├── trapfall-dashboard/# SvelteKit SPA (via rust-embed)
-└── trapfalld/         # Main binary + HTTP server
+└── trapfalld/         # Binary: HTTP server, auth, alerts, search, SPA
 web/                   # SvelteKit frontend source
 ```
 

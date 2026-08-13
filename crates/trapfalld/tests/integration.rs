@@ -58,6 +58,9 @@ fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
         secure_cookie: false,
         public_url: None,
         timezone: "UTC".to_string(),
+        max_ingest_body_bytes: 2 * 1024 * 1024,
+        max_body_bytes: 10 * 1024 * 1024,
+        retention_days: 90,
     };
     AppState {
         store,

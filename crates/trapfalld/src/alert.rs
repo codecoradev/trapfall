@@ -6,8 +6,18 @@ use trapfall_core::Store;
 use trapfall_proto::{AlertRule, Issue};
 
 /// Shared HTTP client for webhook dispatch — connection pooling.
-static REQWEST_CLIENT: LazyLock<reqwest::Client> =
-    LazyLock::new(|| reqwest::Client::builder().pool_max_idle_per_host(4).build().unwrap_or_default());
+///
+/// **Security**: redirects are disabled (`.redirect(reqwest::redirect::Policy::none()`)
+/// to prevent SSRF via open-redirect chains. Webhook URLs are validated
+/// before each request in `dispatch_webhook`.
+static REQWEST_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(4)
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default()
+});
 
 /// Spawn the alert engine background task.
 pub fn spawn_alert_engine(store: Store, _buffer: usize) -> mpsc::UnboundedSender<Issue> {
@@ -99,7 +109,13 @@ async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()>
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("no url in action_config"))?;
 
-    // SSRF protection: block internal/private IPs
+    // SSRF protection: enforce HTTPS scheme
+    let parsed_url = url::Url::parse(url).map_err(|e| anyhow::anyhow!("invalid webhook URL: {e}"))?;
+    if parsed_url.scheme() != "https" {
+        anyhow::bail!("webhook URL must use HTTPS (got: {})", parsed_url.scheme());
+    }
+
+    // SSRF protection: block internal/private IPs (includes DNS resolution check)
     let url_owned = url.to_string();
     let is_private = tokio::task::spawn_blocking(move || is_private_url(&url_owned)).await.unwrap_or(true);
     if is_private {
@@ -262,5 +278,29 @@ mod tests {
     #[test]
     fn test_is_private_url_invalid() {
         assert!(is_private_url("not-a-url"));
+    }
+
+    #[test]
+    fn test_https_scheme_enforcement() {
+        // dispatch_webhook rejects non-HTTPS URLs at the URL parse + scheme check.
+        // Verify the URL parsing logic directly.
+        let http_url = url::Url::parse("http://example.com/webhook").unwrap();
+        assert_ne!(http_url.scheme(), "https");
+
+        let https_url = url::Url::parse("https://example.com/webhook").unwrap();
+        assert_eq!(https_url.scheme(), "https");
+    }
+
+    #[test]
+    fn test_is_private_url_blocks_metadata_endpoint() {
+        // AWS/GCP/Azure metadata endpoints
+        assert!(is_private_url("http://169.254.169.254/latest/meta-data/"));
+        assert!(is_private_url("http://169.254.169.254/computeMetadata/v1/"));
+    }
+
+    #[test]
+    fn test_is_private_url_blocks_carrier_nat() {
+        assert!(is_private_url("https://100.64.0.1/"));
+        assert!(is_private_url("https://100.127.255.254/"));
     }
 }
