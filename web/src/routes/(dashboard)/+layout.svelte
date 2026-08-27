@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { getAuthStore } from '$lib/stores/auth.svelte';
 	import { destroyWsClient } from '$lib/ws';
 	import type { UserInfo } from '$lib/api';
@@ -12,6 +13,21 @@
 	let { title, children }: Props = $props();
 
 	const auth = getAuthStore();
+
+	const navLinks = [
+		{ href: '/issues', label: 'Issues' },
+		{ href: '/projects', label: 'Projects' },
+		{ href: '/rules', label: 'Rules' },
+		{ href: '/transactions', label: 'Performance' },
+		{ href: '/release-health', label: 'Release Health' },
+		{ href: '/settings', label: 'Settings' }
+	];
+
+	let mobileMenuOpen = $state(false);
+
+	function isActive(href: string): boolean {
+		return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
+	}
 
 	function handleLogout() {
 		destroyWsClient();
@@ -26,32 +42,28 @@
 
 <div class="min-h-screen bg-background">
 	<!-- Top Nav -->
-	<header class="border-b">
-		<div class="flex h-14 items-center px-4 lg:px-6">
-			<a href="/issues" class="font-bold text-lg mr-6">TrapFall</a>
-			<nav class="flex items-center gap-4 text-sm">
-				<a href="/issues" class="hover:text-foreground text-muted-foreground transition-colors">
-					Issues
-				</a>
-				<a href="/projects" class="hover:text-foreground text-muted-foreground transition-colors">
-					Projects
-				</a>
-				<a href="/rules" class="hover:text-foreground text-muted-foreground transition-colors">
-					Rules
-				</a>
-				<a href="/transactions" class="hover:text-foreground text-muted-foreground transition-colors">
-					Performance
-				</a>
-				<a href="/release-health" class="hover:text-foreground text-muted-foreground transition-colors">
-					Release Health
-				</a>
-				<a href="/settings" class="hover:text-foreground text-muted-foreground transition-colors">
-					Settings
-				</a>
+	<header class="sticky top-0 z-40 border-b bg-background">
+		<div class="flex h-14 items-center gap-3 px-4 lg:px-6">
+			<a href="/issues" class="font-bold text-lg shrink-0" onclick={() => (mobileMenuOpen = false)}>
+				TrapFall
+			</a>
+			<nav class="hidden md:flex items-center gap-4 text-sm min-w-0">
+				{#each navLinks as link (link.href)}
+					<a
+						href={link.href}
+						class="transition-colors {isActive(link.href)
+							? 'text-foreground font-medium'
+							: 'hover:text-foreground text-muted-foreground'}"
+					>
+						{link.label}
+					</a>
+				{/each}
 			</nav>
-			<div class="ml-auto flex items-center gap-3">
+			<div class="ml-auto flex items-center gap-3 shrink-0">
 				{#if auth.user}
-					<span class="text-sm text-muted-foreground">{auth.user.email}</span>
+					<span class="hidden sm:inline text-sm text-muted-foreground max-w-[180px] truncate">
+						{auth.user.email}
+					</span>
 					<button
 						class="text-sm text-muted-foreground hover:text-foreground transition-colors"
 						onclick={handleLogout}
@@ -59,8 +71,35 @@
 						Log out
 					</button>
 				{/if}
+				<button
+					class="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background hover:bg-muted transition-colors"
+					aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+					aria-expanded={mobileMenuOpen}
+					onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
+				>
+					{#if mobileMenuOpen}
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+					{:else}
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+					{/if}
+				</button>
 			</div>
 		</div>
+		{#if mobileMenuOpen}
+			<nav class="md:hidden border-t px-4 py-2 flex flex-col">
+				{#each navLinks as link (link.href)}
+					<a
+						href={link.href}
+						class="py-2.5 text-sm transition-colors {isActive(link.href)
+							? 'text-foreground font-medium'
+							: 'text-muted-foreground hover:text-foreground'}"
+						onclick={() => (mobileMenuOpen = false)}
+					>
+						{link.label}
+					</a>
+				{/each}
+			</nav>
+		{/if}
 	</header>
 
 	<!-- Content -->

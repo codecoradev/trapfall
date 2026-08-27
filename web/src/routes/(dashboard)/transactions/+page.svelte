@@ -105,7 +105,7 @@
 
 <div class="p-4 lg:p-6 space-y-4">
 	<!-- Header -->
-	<div class="flex items-center justify-between">
+	<div class="flex flex-wrap items-center justify-between gap-2">
 		<h1 class="text-2xl font-bold">Performance</h1>
 		<div class="flex items-center gap-2">
 			{#if projects.length > 1}
@@ -173,15 +173,15 @@
 			</p>
 		</div>
 	{:else}
-		<div class="rounded-lg border">
+		<div class="rounded-lg border overflow-x-auto">
 			<Table>
 				<TableHeader>
 					<TableRow>
-						<TableHead class="w-[40%]">Name</TableHead>
+						<TableHead class="md:w-[40%] whitespace-normal">Name</TableHead>
 						<TableHead>Duration</TableHead>
 						<TableHead>Status</TableHead>
-						<TableHead>Release</TableHead>
-						<TableHead>Received</TableHead>
+						<TableHead class="hidden md:table-cell">Release</TableHead>
+						<TableHead class="hidden md:table-cell">Received</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>
@@ -190,7 +190,7 @@
 							class="cursor-pointer hover:bg-muted/50"
 							onclick={() => goto(`/transactions/${txn.id}?project=${selectedProject}`)}
 						>
-							<TableCell class="font-medium">{txn.name}</TableCell>
+							<TableCell class="whitespace-normal font-medium">{txn.name}</TableCell>
 							<TableCell class="font-mono text-muted-foreground">
 								{formatDuration(txn.duration_ms)}
 							</TableCell>
@@ -199,10 +199,10 @@
 									{txn.status}
 								</Badge>
 							</TableCell>
-							<TableCell class="text-muted-foreground text-sm">
+							<TableCell class="hidden md:table-cell text-muted-foreground text-sm">
 								{txn.release || '—'}
 							</TableCell>
-							<TableCell class="text-muted-foreground text-sm">
+							<TableCell class="hidden md:table-cell text-muted-foreground text-sm">
 								{timeAgo(txn.received_at)}
 							</TableCell>
 						</TableRow>
@@ -213,7 +213,7 @@
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="flex items-center justify-between">
+			<div class="flex flex-wrap items-center justify-between gap-2">
 				<p class="text-xs text-muted-foreground">
 					Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalTransactions)} of {totalTransactions}
 				</p>

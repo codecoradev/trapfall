@@ -164,7 +164,7 @@
 
 <div class="p-4 lg:p-6 space-y-4">
 	<!-- Header -->
-	<div class="flex items-center justify-between">
+	<div class="flex flex-wrap items-center justify-between gap-2">
 		<h1 class="text-2xl font-bold">Issues</h1>
 		<div class="flex items-center gap-2">
 			{#if liveIndicator}
@@ -212,7 +212,7 @@
 				}
 			}}
 			placeholder="Search... (Enter to search)"
-			class="h-8 w-56 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
+			class="h-8 w-full sm:w-56 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
 		/>
 
 		<!-- Status tabs -->
@@ -284,17 +284,17 @@
 			</p>
 		</div>
 	{:else}
-		<div class="rounded-lg border">
+		<div class="rounded-lg border overflow-x-auto">
 			<Table>
 				<TableHeader>
 					<TableRow>
 						<TableHead>Level</TableHead>
-						<TableHead class="w-[40%]">Title</TableHead>
-						<TableHead>Culprit</TableHead>
+						<TableHead class="md:w-[40%] whitespace-normal">Title</TableHead>
+						<TableHead class="hidden md:table-cell">Culprit</TableHead>
 						<TableHead>Events</TableHead>
-						<TableHead>Users</TableHead>
+						<TableHead class="hidden md:table-cell">Users</TableHead>
 						<TableHead>Status</TableHead>
-						<TableHead>Last Seen</TableHead>
+						<TableHead class="hidden md:table-cell">Last Seen</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>
@@ -308,18 +308,18 @@
 									{issue.level}
 								</Badge>
 							</TableCell>
-							<TableCell class="font-medium">{issue.title}</TableCell>
-							<TableCell class="text-muted-foreground text-sm">
+							<TableCell class="whitespace-normal font-medium">{issue.title}</TableCell>
+							<TableCell class="hidden md:table-cell text-muted-foreground text-sm">
 								{issue.culprit || '—'}
 							</TableCell>
 							<TableCell>{issue.count}</TableCell>
-							<TableCell>{issue.user_count}</TableCell>
+							<TableCell class="hidden md:table-cell">{issue.user_count}</TableCell>
 							<TableCell>
 								<Badge variant="outline" class={statusTextClass(issue.status)}>
 									{issue.status}
 								</Badge>
 							</TableCell>
-							<TableCell class="text-muted-foreground text-sm">
+							<TableCell class="hidden md:table-cell text-muted-foreground text-sm">
 								{timeAgo(issue.last_seen)}
 							</TableCell>
 						</TableRow>
@@ -330,7 +330,7 @@
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="flex items-center justify-between">
+			<div class="flex flex-wrap items-center justify-between gap-2">
 				<p class="text-xs text-muted-foreground">
 					Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalIssues)} of {totalIssues}
 				</p>
