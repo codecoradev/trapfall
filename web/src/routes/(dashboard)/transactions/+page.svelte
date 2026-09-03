@@ -27,6 +27,7 @@
 	let totalTransactions: number = $state(0);
 	const perPage = 20;
 	let totalPages: number = $derived(Math.max(1, Math.ceil(totalTransactions / perPage)));
+	let maxDuration: number = $derived(Math.max(...transactions.map((t) => t.duration_ms), 1));
 	let loading = $state(true);
 	let error = $state('');
 
@@ -191,8 +192,19 @@
 							onclick={() => goto(`/transactions/${txn.id}?project=${selectedProject}`)}
 						>
 							<TableCell class="whitespace-normal font-medium">{txn.name}</TableCell>
-							<TableCell class="font-mono text-muted-foreground">
-								{formatDuration(txn.duration_ms)}
+							<TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+								<div class="flex items-center gap-2">
+									<span class="tabular-nums">{formatDuration(txn.duration_ms)}</span>
+									<span
+										class="hidden md:block h-1.5 w-20 rounded-full overflow-hidden bg-muted"
+										aria-hidden="true"
+									>
+										<span
+											class="block h-full rounded-full bg-primary/60"
+											style="width: {Math.min(100, (txn.duration_ms / maxDuration) * 100)}%"
+										></span>
+									</span>
+								</div>
 							</TableCell>
 							<TableCell>
 								<Badge variant="outline" class={transactionStatusTextClass(txn.status)}>

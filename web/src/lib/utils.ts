@@ -144,3 +144,13 @@ export function crashRateColor(rate: number | null): string {
 	if (rate < 5) return "text-warning";
 	return "text-destructive";
 }
+
+/**
+ * Map crash rate to a bar fill color class (matches crashRateColor thresholds).
+ */
+export function crashRateBarClass(rate: number | null): string {
+	if (rate === null) return "";
+	if (rate < 1) return "bg-success";
+	if (rate < 5) return "bg-warning";
+	return "bg-destructive";
+}
