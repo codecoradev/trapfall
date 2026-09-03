@@ -78,6 +78,19 @@ export function statusTextClass(status: string): string {
 	return map[status] ?? 'text-muted-foreground';
 }
 
+// ── Interaction helpers ──────────────────────────────────────────────
+
+/**
+ * Keyboard activation for clickable table rows: rows are not natively
+ * focusable, so pair tabindex="0" with Enter/Space handling.
+ */
+export function rowKeyActivate(e: KeyboardEvent, activate: () => void) {
+	if (e.key === 'Enter' || e.key === ' ') {
+		e.preventDefault();
+		activate();
+	}
+}
+
 // ── Time formatting ───────────────────────────────────────────────────
 
 /**

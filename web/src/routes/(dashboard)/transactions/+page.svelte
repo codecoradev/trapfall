@@ -17,7 +17,7 @@
 		TableHeader,
 		TableRow
 	} from '$lib/components/ui/table/index.js';
-	import { timeAgo, formatDuration, transactionStatusTextClass } from '$lib/utils';
+	import { timeAgo, formatDuration, transactionStatusTextClass, rowKeyActivate } from '$lib/utils';
 
 	let projects: Project[] = $state([]);
 	let selectedProject: string = $state('');
@@ -53,6 +53,10 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function openTransaction(txn: TransactionResponse) {
+		goto(`/transactions/${txn.id}?project=${selectedProject}`);
 	}
 
 	function buildUrl(): string {
@@ -188,8 +192,10 @@
 				<TableBody>
 					{#each transactions as txn}
 						<TableRow
-							class="cursor-pointer hover:bg-muted/50"
-							onclick={() => goto(`/transactions/${txn.id}?project=${selectedProject}`)}
+							class="cursor-pointer hover:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+							tabindex={0}
+							onclick={() => openTransaction(txn)}
+							onkeydown={(e) => rowKeyActivate(e, () => openTransaction(txn))}
 						>
 							<TableCell class="whitespace-normal font-medium">{txn.name}</TableCell>
 							<TableCell class="font-mono text-muted-foreground whitespace-nowrap">
@@ -223,7 +229,11 @@
 			</Table>
 		</div>
 
-		<!-- Pagination -->
+		{#if !loading && !error}
+		<p class="sr-only" role="status">{totalTransactions} transactions loaded</p>
+	{/if}
+
+	<!-- Pagination -->
 		<Pagination page={currentPage} {totalPages} total={totalTransactions} {perPage} onPageChange={goToPage} />
 	{/if}
 </div>

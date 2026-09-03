@@ -19,7 +19,7 @@
 		TableRow
 	} from '$lib/components/ui/table/index.js';
 
-	import { levelTextClass, statusTextClass, timeAgo, formatTime } from '$lib/utils';
+	import { levelTextClass, statusTextClass, timeAgo, formatTime, rowKeyActivate } from '$lib/utils';
 
 	let issue: Issue | null = $state(null);
 	let events: StoredEvent[] = $state([]);
@@ -288,8 +288,10 @@
 						<TableBody>
 							{#each events as event (event.id)}
 								<TableRow
-									class="cursor-pointer hover:bg-muted/50"
+									class="cursor-pointer hover:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+									tabindex={0}
 									onclick={() => goToEvent(event)}
+									onkeydown={(e) => rowKeyActivate(e, () => goToEvent(event))}
 								>
 									<TableCell class="font-medium whitespace-normal">
 										{eventSummary(event)}

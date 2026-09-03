@@ -42,12 +42,18 @@
 </svelte:head>
 
 <div class="min-h-screen bg-background">
+	<a
+		href="#main-content"
+		class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:text-primary-foreground"
+	>
+		Skip to content
+	</a>
 	<!-- Top Nav -->
 	<header class="sticky top-0 z-40 border-b bg-background">
 		<div class="flex h-14 items-center gap-3 px-4 lg:px-6">
 			<Sheet.Root bind:open={mobileMenuOpen}>
 				<Sheet.Trigger
-					class="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background hover:bg-muted transition-colors"
+					class="md:hidden inline-flex items-center justify-center h-11 w-11 rounded-md border border-input bg-background hover:bg-muted transition-colors"
 					aria-label="Open menu"
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
@@ -103,7 +109,7 @@
 	</header>
 
 	<!-- Content -->
-	<main>
+	<main id="main-content">
 		{@render children()}
 	</main>
 </div>

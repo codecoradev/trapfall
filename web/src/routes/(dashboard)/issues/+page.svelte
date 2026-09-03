@@ -31,7 +31,7 @@
 	let error = $state('');
 	let liveIndicator = $state(false);
 
-	import { levelTextClass, statusTextClass, timeAgo } from '$lib/utils';
+	import { levelTextClass, statusTextClass, timeAgo, rowKeyActivate } from '$lib/utils';
 
 	let wsUnsub: (() => void) | null = $state(null);
 
@@ -107,6 +107,10 @@
 		searchQuery = '';
 		currentPage = 1;
 		navigate();
+	}
+
+	function openIssue(issue: Issue) {
+		goto(`/issues/${issue.id}?project=${selectedProject}`);
 	}
 
 	function goToPage(p: number) {
@@ -262,6 +266,9 @@
 	</div>
 
 	<!-- Content -->
+	{#if !loading && !error}
+		<p class="sr-only" role="status">{totalIssues} issues loaded</p>
+	{/if}
 	{#if loading}
 		<div class="space-y-3">
 			{#each Array(5) as _}
@@ -298,8 +305,10 @@
 				<TableBody>
 					{#each issues as issue}
 						<TableRow
-							class="cursor-pointer hover:bg-muted/50"
-							onclick={() => goto(`/issues/${issue.id}?project=${selectedProject}`)}
+							class="cursor-pointer hover:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+							tabindex={0}
+							onclick={() => openIssue(issue)}
+							onkeydown={(e) => rowKeyActivate(e, () => openIssue(issue))}
 						>
 							<TableCell>
 								<Badge variant="outline" class={levelTextClass(issue.level)}>
