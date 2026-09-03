@@ -5,6 +5,7 @@
 	import { api, type Project, type AlertRule, type CreateAlertRule } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+	import EmptyState from '$lib/components/EmptyState.svelte';
 	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card } from '$lib/components/ui/card/index.js';
@@ -127,12 +128,12 @@
 </svelte:head>
 
 <div class="p-4 lg:p-6 space-y-4">
-	<div class="flex items-center justify-between">
-		<div class="flex items-center gap-3">
-			<h1 class="text-2xl font-bold">Alert Rules</h1>
+	<div class="flex flex-wrap items-center justify-between gap-2">
+		<h1 class="text-2xl font-bold whitespace-nowrap">Alert Rules</h1>
+		<div class="flex items-center gap-2">
 			{#if projects.length > 1}
 				<select
-					class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+					class="h-9 min-w-0 max-w-[190px] rounded-md border border-input bg-background px-3 text-sm"
 					value={selectedProject}
 					onchange={() => switchProject((event?.target as HTMLSelectElement).value)}
 				>
@@ -141,10 +142,10 @@
 					{/each}
 				</select>
 			{/if}
+			<Button onclick={() => (showForm = !showForm)} variant={showForm ? 'secondary' : 'default'}>
+				{showForm ? 'Cancel' : '+ New Rule'}
+			</Button>
 		</div>
-		<Button onclick={() => (showForm = !showForm)} variant={showForm ? 'secondary' : 'default'}>
-			{showForm ? 'Cancel' : '+ New Rule'}
-		</Button>
 	</div>
 
 	{#if error}
@@ -198,38 +199,36 @@
 	{#if loading}
 		<p class="text-muted-foreground">Loading rules...</p>
 	{:else if rules.length === 0 && !showForm}
-		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<p class="text-lg font-medium text-muted-foreground">No alert rules yet</p>
-			<p class="text-sm text-muted-foreground mt-1">
-				Create a rule to get notified when errors match your conditions.
-			</p>
-		</div>
+		<EmptyState
+			title="No alert rules yet"
+			description="Create a rule to get notified when errors match your conditions."
+		/>
 	{:else}
 		<div class="space-y-3">
 			{#each rules as rule}
 				<Card class="p-4">
-					<div class="flex items-start justify-between">
-						<div class="space-y-1">
-							<div class="flex items-center gap-2">
-								<h3 class="font-medium">{rule.name}</h3>
+					<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+						<div class="min-w-0 space-y-1">
+							<div class="flex flex-wrap items-center gap-2">
+								<h3 class="font-medium break-words">{rule.name}</h3>
 								<Badge variant={rule.enabled ? 'default' : 'secondary'}>
 									{rule.enabled ? 'Active' : 'Disabled'}
 								</Badge>
 								<Badge variant="outline">{rule.action_type}</Badge>
 							</div>
-							<p class="text-sm text-muted-foreground">
+							<p class="text-sm text-muted-foreground break-words">
 								Level: {JSON.stringify(rule.conditions?.level ?? 'any')}
 								{rule.conditions?.count_gte ? ` | Count ≥ ${rule.conditions.count_gte}` : ''}
 								{rule.conditions?.title_contains
 									? ` | Title contains "${rule.conditions.title_contains}"`
 									: ''}
 							</p>
-							<p class="text-xs text-muted-foreground">
+							<p class="text-xs text-muted-foreground break-all">
 								Cooldown: {rule.cooldown_seconds}s ·
 								{rule.action_config?.url || 'no webhook configured'}
 							</p>
 						</div>
-						<div class="flex gap-2">
+						<div class="flex gap-2 shrink-0">
 							<Button variant="outline" size="sm" onclick={() => handleToggle(rule)}>
 								{rule.enabled ? 'Disable' : 'Enable'}
 							</Button>
