@@ -7,6 +7,7 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { toast } from 'svelte-sonner';
 
 	const auth = getAuthStore();
 	let user = $derived(auth.user);
@@ -34,7 +35,7 @@
 				current_password: currentPassword,
 				new_password: newPassword
 			});
-			passwordSuccess = 'Password updated successfully.';
+			toast.success('Password updated');
 			currentPassword = '';
 			newPassword = '';
 			confirmPassword = '';
@@ -91,9 +92,6 @@
 
 				{#if passwordError}
 					<p class="text-sm text-destructive">{passwordError}</p>
-				{/if}
-				{#if passwordSuccess}
-					<p class="text-sm text-success">{passwordSuccess}</p>
 				{/if}
 
 				<Button type="submit">Update Password</Button>

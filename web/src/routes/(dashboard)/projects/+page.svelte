@@ -7,6 +7,9 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+	import { toast } from 'svelte-sonner';
 
 	let projects: Project[] = $state([]);
 	let loading = $state(true);
@@ -26,6 +29,9 @@
 	let addLoading = $state(false);
 
 	let editName = $state('');
+
+	/** Pending destructive action awaiting confirmation in the AlertDialog. */
+	let pending: { action: 'delete' | 'rotate'; slug: string; name: string } | null = $state(null);
 
 	async function toggleDsn(project: Project) {
 		const id = project.id;
@@ -81,6 +87,7 @@
 		try {
 			const slug = newProjectSlug || undefined;
 			await api.createProject(newProjectName, slug);
+			toast.success('Project created');
 			newProjectName = '';
 			newProjectSlug = '';
 			showAddForm = false;
@@ -96,6 +103,7 @@
 		if (!editName.trim()) return;
 		try {
 			await api.updateProject(slug, editName.trim());
+			toast.success('Project renamed');
 			showEditForm = null;
 			editName = '';
 			openMenu = null;
@@ -109,9 +117,10 @@
 		openMenu = null;
 		try {
 			await api.archiveProject(slug);
+			toast.success('Project archived');
 			await loadProjects();
 		} catch (e: any) {
-			error = e?.message || 'Failed to archive project';
+			toast.error(e?.message || 'Failed to archive project');
 		}
 	}
 
@@ -119,24 +128,27 @@
 		openMenu = null;
 		try {
 			await api.unarchiveProject(slug);
+			toast.success('Project unarchived');
 			await loadProjects();
 		} catch (e: any) {
-			error = e?.message || 'Failed to unarchive project';
+			toast.error(e?.message || 'Failed to unarchive project');
 		}
 	}
 
 	async function handleDelete(slug: string) {
-		if (!confirm('Permanently delete this project and all its data? This cannot be undone.')) return;
+		pending = null;
 		openMenu = null;
 		try {
 			await api.deleteProject(slug);
+			toast.success('Project deleted');
 			await loadProjects();
 		} catch (e: any) {
-			error = e?.message || 'Failed to delete project (must be archived first)';
+			toast.error(e?.message || 'Failed to delete project (must be archived first)');
 		}
 	}
 
 	async function handleRotateDsn(slug: string) {
+		pending = null;
 		openMenu = null;
 		try {
 			const updated = await api.rotateDsn(slug);
@@ -145,8 +157,11 @@
 			// 'Show' button displays the real value without an extra fetch.
 			revealedDsn[updated.id] = updated.dsn;
 			showDsn[updated.id] = true;
+			toast.success('DSN rotated', {
+				description: 'Update your SDK with the new DSN — the old one no longer works.'
+			});
 		} catch (e: any) {
-			error = e?.message || 'Failed to rotate DSN';
+			toast.error(e?.message || 'Failed to rotate DSN');
 		}
 	}
 
@@ -225,14 +240,12 @@
 			{/each}
 		</div>
 	{:else if displayedProjects.length === 0}
-		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<p class="text-lg font-medium text-muted-foreground">
-				{tab === 'active' ? 'No active projects' : 'No archived projects'}
-			</p>
-			<p class="text-sm text-muted-foreground mt-1">
-				{tab === 'active' ? 'Create a project to start capturing errors.' : 'Archived projects will appear here.'}
-			</p>
-		</div>
+		<EmptyState
+			title={tab === 'active' ? 'No active projects' : 'No archived projects'}
+			description={tab === 'active'
+				? 'Create a project to start capturing errors.'
+				: 'Archived projects will appear here.'}
+		/>
 	{:else}
 		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 			{#each displayedProjects as project (project.id)}
@@ -284,7 +297,7 @@
 												</button>
 												<button
 													class="w-full text-left px-3 py-2 text-sm hover:bg-muted"
-													onclick={() => handleRotateDsn(project.slug)}
+													onclick={() => { pending = { action: 'rotate', slug: project.slug, name: project.name }; openMenu = null; }}
 												>
 													Rotate DSN
 												</button>
@@ -303,7 +316,7 @@
 												</button>
 												<button
 													class="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
-													onclick={() => handleDelete(project.slug)}
+													onclick={() => { pending = { action: 'delete', slug: project.slug, name: project.name }; openMenu = null; }}
 												>
 													Delete permanently
 												</button>
@@ -352,7 +365,36 @@
 						</p>
 					</CardContent>
 				</Card>
-			{/each}
-		</div>
-	{/if}
-</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
+	<!-- Confirm dialog for destructive actions (rotate DSN / delete project) -->
+	<AlertDialog.Root open={pending !== null} onOpenChange={(o) => (pending = o ? pending : null)}>
+		<AlertDialog.Content>
+			<AlertDialog.Header>
+				<AlertDialog.Title>
+					{pending?.action === 'delete' ? `Delete ${pending?.name}?` : `Rotate DSN for ${pending?.name}?`}
+				</AlertDialog.Title>
+				<AlertDialog.Description>
+					{#if pending?.action === 'delete'}
+						This permanently removes the project and all its captured events. This cannot be undone.
+					{:else}
+						The current DSN stops working immediately. Any SDK still using it will fail to send events until updated.
+					{/if}
+				</AlertDialog.Description>
+			</AlertDialog.Header>
+			<AlertDialog.Footer>
+				<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+				<AlertDialog.Action
+					class={pending?.action === 'delete'
+						? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+						: ''}
+					onclick={() => (pending?.action === 'delete' ? handleDelete(pending.slug) : handleRotateDsn(pending!.slug))}
+				>
+					{pending?.action === 'delete' ? 'Delete project' : 'Rotate DSN'}
+				</AlertDialog.Action>
+			</AlertDialog.Footer>
+		</AlertDialog.Content>
+	</AlertDialog.Root>

@@ -7,6 +7,8 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 	import {
 		Table,
 		TableBody,
@@ -342,12 +344,10 @@
 			<p class="text-sm text-destructive">{error}</p>
 		</div>
 	{:else if sessions.length === 0}
-		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<p class="text-lg font-medium text-muted-foreground">No session data yet</p>
-			<p class="text-sm text-muted-foreground mt-1">
-				Ensure your Sentry SDK has release configured.
-			</p>
-		</div>
+		<EmptyState
+			title="No session data yet"
+			description="Ensure your Sentry SDK has release configured."
+		/>
 	{:else}
 		<div class="rounded-lg border overflow-x-auto">
 			<Table>
@@ -401,43 +401,6 @@
 		</div>
 
 		<!-- Pagination -->
-		{#if totalPages > 1}
-			<div class="flex items-center justify-between">
-				<p class="text-xs text-muted-foreground">
-					Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalSessions)} of {totalSessions}
-				</p>
-				<div class="flex items-center gap-1">
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={currentPage <= 1}
-						onclick={() => goToPage(currentPage - 1)}
-					>
-						Prev
-					</Button>
-					{#each Array(Math.min(totalPages, 5)) as _, i}
-						{@const pageNum = currentPage <= 3 ? i + 1 : currentPage - 2 + i}
-						{#if pageNum <= totalPages}
-							<Button
-								variant={pageNum === currentPage ? 'default' : 'outline'}
-								size="sm"
-								class="w-9"
-								onclick={() => goToPage(pageNum)}
-							>
-								{pageNum}
-							</Button>
-						{/if}
-					{/each}
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={currentPage >= totalPages}
-						onclick={() => goToPage(currentPage + 1)}
-					>
-						Next
-					</Button>
-				</div>
-			</div>
-		{/if}
+		<Pagination page={currentPage} {totalPages} total={totalSessions} {perPage} onPageChange={goToPage} />
 	{/if}
 </div>
