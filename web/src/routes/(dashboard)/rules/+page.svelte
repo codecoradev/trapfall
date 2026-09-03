@@ -13,6 +13,8 @@
 		toggleAlertRule
 	} from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge/index.js';
+	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card } from '$lib/components/ui/card/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -24,6 +26,8 @@
 	let selectedProject: string = $state('');
 	let loading = $state(true);
 	let error = $state('');
+	/** Rule id awaiting delete confirmation in the AlertDialog. */
+	let pendingDelete: AlertRule | null = $state(null);
 	let showForm = $state(false);
 
 	let formName = $state('');
@@ -96,27 +100,33 @@
 			showForm = false;
 			formName = '';
 			formWebhookUrl = '';
+			toast.success('Rule created');
 			await loadRules();
 		} catch (e: any) {
-			error = e?.message || 'Failed to create rule';
+			toast.error(e?.message || 'Failed to create rule');
 		}
 	}
 
 	async function handleToggle(rule: AlertRule) {
 		try {
 			await toggleAlertRule(rule.id, !rule.enabled);
+			toast.success(rule.enabled ? 'Rule disabled' : 'Rule enabled');
 			await loadRules();
 		} catch (e: any) {
-			error = e?.message || 'Failed to toggle';
+			toast.error(e?.message || 'Failed to toggle rule');
 		}
 	}
 
-	async function handleDelete(ruleId: string) {
+	async function handleDelete() {
+		if (!pendingDelete) return;
+		const id = pendingDelete.id;
+		pendingDelete = null;
 		try {
-			await deleteAlertRule(ruleId);
+			await deleteAlertRule(id);
+			toast.success('Rule deleted');
 			await loadRules();
 		} catch (e: any) {
-			error = e?.message || 'Failed to delete';
+			toast.error(e?.message || 'Failed to delete rule');
 		}
 	}
 </script>
@@ -232,7 +242,7 @@
 							<Button variant="outline" size="sm" onclick={() => handleToggle(rule)}>
 								{rule.enabled ? 'Disable' : 'Enable'}
 							</Button>
-							<Button variant="destructive" size="sm" onclick={() => handleDelete(rule.id)}>
+							<Button variant="destructive" size="sm" onclick={() => (pendingDelete = rule)}>
 								Delete
 							</Button>
 						</div>
@@ -241,4 +251,25 @@
 			{/each}
 		</div>
 	{/if}
+
+	<!-- Confirm dialog for rule deletion -->
+	<AlertDialog.Root open={pendingDelete !== null} onOpenChange={(o) => (pendingDelete = o ? pendingDelete : null)}>
+		<AlertDialog.Content>
+			<AlertDialog.Header>
+				<AlertDialog.Title>Delete rule "{pendingDelete?.name}"?</AlertDialog.Title>
+				<AlertDialog.Description>
+					Alerts matching this rule will no longer be sent. This cannot be undone.
+				</AlertDialog.Description>
+			</AlertDialog.Header>
+			<AlertDialog.Footer>
+				<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+				<AlertDialog.Action
+					class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+					onclick={handleDelete}
+				>
+					Delete rule
+				</AlertDialog.Action>
+			</AlertDialog.Footer>
+		</AlertDialog.Content>
+	</AlertDialog.Root>
 </div>

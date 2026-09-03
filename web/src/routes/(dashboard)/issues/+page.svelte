@@ -7,6 +7,8 @@
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 	import {
 		Table,
 		TableBody,
@@ -271,18 +273,14 @@
 			<p class="text-sm text-destructive">{error}</p>
 		</div>
 	{:else if issues.length === 0}
-		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<p class="text-lg font-medium text-muted-foreground">No issues found</p>
-			<p class="text-sm text-muted-foreground mt-1">
-				{#if searchQuery}
-					No results for "{searchQuery}" in {projects.find(p => p.slug === selectedProject)?.name || selectedProject}. Try switching projects.
-				{:else if filterStatus || filterLevel}
-					Try adjusting your filters.
-				{:else}
-					Send errors to your DSN and they'll appear here.
-				{/if}
-			</p>
-		</div>
+		<EmptyState
+			title="No issues found"
+			description={searchQuery
+				? `No results for "${searchQuery}" in ${projects.find(p => p.slug === selectedProject)?.name || selectedProject}. Try switching projects.`
+				: filterStatus || filterLevel
+					? 'Try adjusting your filters.'
+					: "Send errors to your DSN and they'll appear here."}
+		/>
 	{:else}
 		<div class="rounded-lg border overflow-x-auto">
 			<Table>
@@ -329,43 +327,6 @@
 		</div>
 
 		<!-- Pagination -->
-		{#if totalPages > 1}
-			<div class="flex flex-wrap items-center justify-between gap-2">
-				<p class="text-xs text-muted-foreground">
-					Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalIssues)} of {totalIssues}
-				</p>
-				<div class="flex items-center gap-1">
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={currentPage <= 1}
-						onclick={() => goToPage(currentPage - 1)}
-					>
-						Prev
-					</Button>
-					{#each Array(Math.min(totalPages, 5)) as _, i}
-						{@const pageNum = currentPage <= 3 ? i + 1 : currentPage - 2 + i}
-						{#if pageNum <= totalPages}
-							<Button
-								variant={pageNum === currentPage ? 'default' : 'outline'}
-								size="sm"
-								class="w-9"
-								onclick={() => goToPage(pageNum)}
-							>
-								{pageNum}
-							</Button>
-						{/if}
-					{/each}
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={currentPage >= totalPages}
-						onclick={() => goToPage(currentPage + 1)}
-					>
-						Next
-					</Button>
-				</div>
-			</div>
-		{/if}
+		<Pagination page={currentPage} {totalPages} total={totalIssues} {perPage} onPageChange={goToPage} />
 	{/if}
 </div>

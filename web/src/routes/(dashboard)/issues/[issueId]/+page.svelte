@@ -7,6 +7,8 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent } from '$lib/components/ui/card/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 	import {
 		Table,
 		TableBody,
@@ -233,9 +235,10 @@
 			</div>
 
 			{#if events.length === 0}
-				<div class="flex flex-col items-center justify-center py-12 text-center">
-					<p class="text-sm text-muted-foreground">No events recorded for this issue yet.</p>
-				</div>
+				<EmptyState
+					title="No events recorded"
+					description="Events for this issue will appear here as they arrive."
+				/>
 			{:else}
 				<div class="rounded-lg border">
 					<Table>
@@ -268,31 +271,13 @@
 				</div>
 
 				<!-- Events pagination -->
-				{#if totalEventPages > 1}
-					<div class="flex items-center justify-between">
-						<p class="text-xs text-muted-foreground tabular-nums">
-							Page {eventsPage} of {totalEventPages}
-						</p>
-						<div class="flex items-center gap-1">
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={eventsPage <= 1}
-								onclick={() => goToEventsPage(eventsPage - 1)}
-							>
-								Prev
-							</Button>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={eventsPage >= totalEventPages}
-								onclick={() => goToEventsPage(eventsPage + 1)}
-							>
-								Next
-							</Button>
-						</div>
-					</div>
-				{/if}
+				<Pagination
+					page={eventsPage}
+					totalPages={totalEventPages}
+					total={totalEvents}
+					perPage={eventsPerPage}
+					onPageChange={goToEventsPage}
+				/>
 			{/if}
 		</div>
 	{/if}
