@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-03
+
+### Added
+
+- **Issue detail page** (#314): the previously-empty `/issues/[issueId]` route now renders level/status badges, metadata stats (events, users, first/last seen), Resolve/Unresolve/Ignore actions with optimistic update, and a paginated event list linking to event detail.
+- **Data visualization** (#318): events-per-day chart on issue detail (last 14 days), relative duration bars in the transactions table, and crash-rate mini-bars on release health — all dependency-free, embedded-bundle friendly.
+- **Shared UI components** (#317, #320): `EmptyState` and `Pagination` replace copy-pasted blocks across five pages; component tests included.
+- **Confirmation dialogs and toasts** (#317): styled `AlertDialog` confirmations for delete project / rotate DSN / delete rule, and themed toast feedback for project, rule, and password mutations.
+- **Geist typography** (#316): self-hosted Geist Variable + Geist Mono Variable (offline-capable, bundled).
+
+### Fixed
+
+- **Invisible text in light scheme** (#316): `@theme inline` hardcoded dark-mode values into Tailwind utilities, so users with a light system preference saw near-black text on the dark shell (invisible headings, titles, button labels). Theme tokens now live on `:root`/`.dark` custom properties and swap correctly in both modes.
+- **Rules page on narrow viewports** (#321): header no longer overflows (31px horizontal scroll at 390px), rule cards stack with actions below the text, long webhook URLs break instead of overflowing.
+- **Mobile dashboard layout** (#306): responsive shell with a sheet drawer (focus trap, Escape, outside-click), active nav highlighting, table column hiding, and DSN truncation.
+- **Flaky CI test** (#315): serialized retention env-var tests that raced under parallel cargo test.
+- **npm audit findings** (#306): bumped `@sveltejs/kit`, `nanoid`, `postcss`, `undici` — 0 vulnerabilities remaining.
+
+### Changed
+
+- **Semantic color tokens** (#316, #318): `--success`/`--warning`/`--info`/`--abnormal` replace ~30 raw palette classes; light-mode primary is monochrome near-black.
+- **Accessibility** (#319): keyboard-activatable table rows, screen-reader live regions, skip-to-content link, 44px mobile menu target.
+- **API client** (#320): standalone alert-rule and attachment functions consolidated into `ApiClient`; stale `tailwind.config.js` reference removed from `components.json`.
+
 ## [0.2.1] - 2026-06-30
 
 ### Fixed
