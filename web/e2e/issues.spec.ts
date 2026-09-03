@@ -79,4 +79,37 @@ test.describe('Issue detail view', () => {
 			/culprit|stacktrace|stack trace|first seen|last seen|level/i.test(body);
 		expect(looksLikeIssueDetail).toBeTruthy();
 	});
+
+	test('lists events and navigates to the event detail view', async ({ page }) => {
+		await expect(issueRows(page).first()).toBeVisible({ timeout: 10000 });
+		await issueRows(page).first().click();
+		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+/i);
+
+		// The events table should render at least one event row.
+		const eventRows = page.locator('tr.cursor-pointer');
+		await expect(eventRows.first()).toBeVisible({ timeout: 10000 });
+
+		// Clicking an event row navigates to the event detail page.
+		await eventRows.first().click();
+		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+\/events\/[a-f0-9-]+/i);
+	});
+
+	test('resolve action updates the issue status badge', async ({ page }) => {
+		await expect(issueRows(page).first()).toBeVisible({ timeout: 10000 });
+		await issueRows(page).first().click();
+		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+/i);
+
+		// Status persists across runs, so normalize to unresolved first.
+		const resolveBtn = page.getByRole('button', { name: 'Resolve', exact: true });
+		const unresolveBtn = page.getByRole('button', { name: 'Unresolve', exact: true });
+		await expect(resolveBtn.or(unresolveBtn)).toBeVisible({ timeout: 10000 });
+		if (await unresolveBtn.isVisible()) {
+			await unresolveBtn.click();
+			await expect(resolveBtn).toBeVisible({ timeout: 10000 });
+		}
+
+		// Resolve, then the primary action flips to Unresolve.
+		await resolveBtn.click();
+		await expect(unresolveBtn).toBeVisible({ timeout: 10000 });
+	});
 });
