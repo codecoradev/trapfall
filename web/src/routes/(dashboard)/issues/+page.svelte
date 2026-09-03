@@ -168,8 +168,8 @@
 		<h1 class="text-2xl font-bold">Issues</h1>
 		<div class="flex items-center gap-2">
 			{#if liveIndicator}
-				<span class="inline-flex items-center gap-1 text-xs text-emerald-500">
-					<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+				<span class="inline-flex items-center gap-1 text-xs text-success">
+					<span class="h-2 w-2 rounded-full bg-success animate-pulse"></span>
 					Live
 				</span>
 			{/if}
