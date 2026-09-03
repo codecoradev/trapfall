@@ -18,10 +18,7 @@ COPY crates/trapfall-proto/Cargo.toml crates/trapfall-proto/Cargo.toml
 COPY crates/trapfall-db/Cargo.toml crates/trapfall-db/Cargo.toml
 COPY crates/trapfall-core/Cargo.toml crates/trapfall-core/Cargo.toml
 COPY crates/trapfall-ingest/Cargo.toml crates/trapfall-ingest/Cargo.toml
-COPY crates/trapfall-search/Cargo.toml crates/trapfall-search/Cargo.toml
-COPY crates/trapfall-alert/Cargo.toml crates/trapfall-alert/Cargo.toml
 COPY crates/trapfall-mcp/Cargo.toml crates/trapfall-mcp/Cargo.toml
-COPY crates/trapfall-dashboard/Cargo.toml crates/trapfall-dashboard/Cargo.toml
 COPY crates/trapfalld/Cargo.toml crates/trapfalld/Cargo.toml
 
 # Create dummy source files for dependency caching
@@ -29,10 +26,7 @@ RUN mkdir -p crates/trapfall-proto/src && echo "" > crates/trapfall-proto/src/li
     mkdir -p crates/trapfall-db/src && echo "" > crates/trapfall-db/src/lib.rs && \
     mkdir -p crates/trapfall-core/src && echo "" > crates/trapfall-core/src/lib.rs && \
     mkdir -p crates/trapfall-ingest/src && echo "" > crates/trapfall-ingest/src/lib.rs && \
-    mkdir -p crates/trapfall-search/src && echo "" > crates/trapfall-search/src/lib.rs && \
-    mkdir -p crates/trapfall-alert/src && echo "" > crates/trapfall-alert/src/lib.rs && \
     mkdir -p crates/trapfall-mcp/src && echo "" > crates/trapfall-mcp/src/lib.rs && \
-    mkdir -p crates/trapfall-dashboard/src && echo "" > crates/trapfall-dashboard/src/lib.rs && \
     mkdir -p crates/trapfalld/src && echo "fn main() {}" > crates/trapfalld/src/main.rs
 RUN cargo build --release --features postgres --bin trapfall 2>/dev/null || true
 
