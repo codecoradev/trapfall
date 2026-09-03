@@ -2,16 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import {
-		api,
-		type Project,
-		type AlertRule,
-		type CreateAlertRule,
-		listAlertRules,
-		createAlertRule,
-		deleteAlertRule,
-		toggleAlertRule
-	} from '$lib/api';
+	import { api, type Project, type AlertRule, type CreateAlertRule } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
 	import { toast } from 'svelte-sonner';
@@ -41,7 +32,7 @@
 		loading = true;
 		error = '';
 		try {
-			rules = await listAlertRules(selectedProject);
+			rules = await api.listAlertRules(selectedProject);
 		} catch (e: any) {
 			error = e?.message || 'Failed to load rules';
 		} finally {
@@ -90,7 +81,7 @@
 		if (formWebhookUrl.trim()) actionConfig.url = formWebhookUrl.trim();
 
 		try {
-			await createAlertRule(selectedProject, {
+			await api.createAlertRule(selectedProject, {
 				name: formName.trim(),
 				conditions,
 				action_type: 'webhook',
@@ -109,7 +100,7 @@
 
 	async function handleToggle(rule: AlertRule) {
 		try {
-			await toggleAlertRule(rule.id, !rule.enabled);
+			await api.toggleAlertRule(rule.id, !rule.enabled);
 			toast.success(rule.enabled ? 'Rule disabled' : 'Rule enabled');
 			await loadRules();
 		} catch (e: any) {
@@ -122,7 +113,7 @@
 		const id = pendingDelete.id;
 		pendingDelete = null;
 		try {
-			await deleteAlertRule(id);
+			await api.deleteAlertRule(id);
 			toast.success('Rule deleted');
 			await loadRules();
 		} catch (e: any) {
