@@ -277,13 +277,13 @@
 						<div class="flex h-4 rounded-full overflow-hidden bg-muted mb-3">
 							{#if aggregateExited > 0}
 								<div
-									class="bg-green-500 h-full"
+									class="bg-success h-full"
 									style="width: {(aggregateExited / aggregateTotal * 100)}%"
 								></div>
 							{/if}
 							{#if aggregateErrored > 0}
 								<div
-									class="bg-yellow-500 h-full"
+									class="bg-warning h-full"
 									style="width: {(aggregateErrored / aggregateTotal * 100)}%"
 								></div>
 							{/if}
@@ -295,20 +295,20 @@
 							{/if}
 							{#if aggregateCrashed > 0}
 								<div
-									class="bg-red-500 h-full"
+									class="bg-destructive h-full"
 									style="width: {(aggregateCrashed / aggregateTotal * 100)}%"
 								></div>
 							{/if}
 						</div>
 						<div class="flex items-center gap-4 text-sm">
 							<span class="flex items-center gap-1.5">
-								<span class="h-2.5 w-2.5 rounded-full bg-green-500"></span>
-								<span class="text-green-600 dark:text-green-400 font-medium">{aggregateExited}</span>
+								<span class="h-2.5 w-2.5 rounded-full bg-success"></span>
+								<span class="text-success font-medium">{aggregateExited}</span>
 								<span class="text-muted-foreground">exited</span>
 							</span>
 							<span class="flex items-center gap-1.5">
-								<span class="h-2.5 w-2.5 rounded-full bg-yellow-500"></span>
-								<span class="text-yellow-600 dark:text-yellow-400 font-medium">{aggregateErrored}</span>
+								<span class="h-2.5 w-2.5 rounded-full bg-warning"></span>
+								<span class="text-warning font-medium">{aggregateErrored}</span>
 								<span class="text-muted-foreground">errored</span>
 							</span>
 							<span class="flex items-center gap-1.5">
@@ -317,8 +317,8 @@
 								<span class="text-muted-foreground">abnormal</span>
 							</span>
 							<span class="flex items-center gap-1.5">
-								<span class="h-2.5 w-2.5 rounded-full bg-red-500"></span>
-								<span class="text-red-600 dark:text-red-400 font-medium">{aggregateCrashed}</span>
+								<span class="h-2.5 w-2.5 rounded-full bg-destructive"></span>
+								<span class="text-destructive font-medium">{aggregateCrashed}</span>
 								<span class="text-muted-foreground">crashed</span>
 							</span>
 						</div>
@@ -379,16 +379,16 @@
 									{s.crash_rate !== null ? s.crash_rate.toFixed(2) + '%' : '—'}
 								</span>
 							</TableCell>
-							<TableCell class="hidden md:table-cell text-center text-green-600 dark:text-green-400 font-medium">
+							<TableCell class="hidden md:table-cell text-center text-success font-medium">
 								{s.exited}
 							</TableCell>
-							<TableCell class="hidden md:table-cell text-center text-yellow-600 dark:text-yellow-400 font-medium">
+							<TableCell class="hidden md:table-cell text-center text-warning font-medium">
 								{s.errored}
 							</TableCell>
 							<TableCell class="hidden md:table-cell text-center text-orange-600 dark:text-orange-400 font-medium">
 								{s.abnormal}
 							</TableCell>
-							<TableCell class="text-center text-red-600 dark:text-red-400 font-medium">
+							<TableCell class="text-center text-destructive font-medium">
 								{s.crashed}
 							</TableCell>
 							<TableCell class="text-muted-foreground text-sm">

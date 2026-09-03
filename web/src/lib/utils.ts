@@ -54,14 +54,14 @@ export function statusColor(status: string): BadgeVariant {
  */
 export function levelTextClass(level: string): string {
 	const map: Record<string, string> = {
-		fatal: 'text-red-600',
-		error: 'text-red-500',
-		warning: 'text-yellow-500',
-		info: 'text-blue-500',
-		debug: 'text-gray-500',
-		trace: 'text-gray-400'
+		fatal: 'text-destructive',
+		error: 'text-destructive',
+		warning: 'text-warning',
+		info: 'text-info',
+		debug: 'text-muted-foreground',
+		trace: 'text-muted-foreground'
 	};
-	return map[level] ?? 'text-gray-500';
+	return map[level] ?? 'text-muted-foreground';
 }
 
 /**
@@ -69,11 +69,11 @@ export function levelTextClass(level: string): string {
  */
 export function statusTextClass(status: string): string {
 	const map: Record<string, string> = {
-		unresolved: 'text-red-500',
-		resolved: 'text-green-600',
-		ignored: 'text-gray-500'
+		unresolved: 'text-destructive',
+		resolved: 'text-success',
+		ignored: 'text-muted-foreground'
 	};
-	return map[status] ?? 'text-gray-500';
+	return map[status] ?? 'text-muted-foreground';
 }
 
 // ── Time formatting ───────────────────────────────────────────────────
@@ -125,12 +125,12 @@ export function formatDuration(ms: number): string {
  */
 export function transactionStatusTextClass(status: string): string {
 	const map: Record<string, string> = {
-		ok: 'text-green-600',
-		deadline_exceeded: 'text-red-500',
-		cancelled: 'text-yellow-500',
-		unknown: 'text-gray-500'
+		ok: 'text-success',
+		deadline_exceeded: 'text-destructive',
+		cancelled: 'text-warning',
+		unknown: 'text-muted-foreground'
 	};
-	return map[status] ?? 'text-gray-500';
+	return map[status] ?? 'text-muted-foreground';
 }
 
 /**
@@ -138,7 +138,7 @@ export function transactionStatusTextClass(status: string): string {
  */
 export function crashRateColor(rate: number | null): string {
 	if (rate === null) return "";
-	if (rate < 1) return "text-green-500";
-	if (rate < 5) return "text-yellow-500";
-	return "text-red-500";
+	if (rate < 1) return "text-success";
+	if (rate < 5) return "text-warning";
+	return "text-destructive";
 }

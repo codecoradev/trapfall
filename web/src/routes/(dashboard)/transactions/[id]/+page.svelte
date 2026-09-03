@@ -27,13 +27,13 @@
 	let projectSlug = $state('');
 
 	function spanColor(op: string | null): string {
-		if (!op) return 'bg-gray-400 dark:bg-gray-600';
+		if (!op) return 'bg-muted-foreground/60';
 		const lower = op.toLowerCase();
 		if (lower.includes('db') || lower.includes('sql') || lower.includes('postgres') || lower.includes('redis'))
-			return 'bg-amber-400 dark:bg-amber-500';
+			return 'bg-warning';
 		if (lower.includes('http') || lower.includes('request') || lower.includes('fetch') || lower.includes('client'))
-			return 'bg-blue-400 dark:bg-blue-500';
-		return 'bg-gray-400 dark:bg-gray-600';
+			return 'bg-info';
+		return 'bg-muted-foreground/60';
 	}
 
 	function spanColorLabel(op: string | null): string {
@@ -127,15 +127,15 @@
 						<CardTitle class="text-lg">Span Waterfall</CardTitle>
 						<div class="flex items-center gap-3 text-xs text-muted-foreground">
 							<span class="flex items-center gap-1">
-								<span class="h-3 w-3 rounded bg-amber-400 dark:bg-amber-500 inline-block"></span>
+								<span class="h-3 w-3 rounded bg-warning inline-block"></span>
 								Database
 							</span>
 							<span class="flex items-center gap-1">
-								<span class="h-3 w-3 rounded bg-blue-400 dark:bg-blue-500 inline-block"></span>
+								<span class="h-3 w-3 rounded bg-info inline-block"></span>
 								HTTP
 							</span>
 							<span class="flex items-center gap-1">
-								<span class="h-3 w-3 rounded bg-gray-400 dark:bg-gray-600 inline-block"></span>
+								<span class="h-3 w-3 rounded bg-muted-foreground/60 inline-block"></span>
 								Other
 							</span>
 						</div>

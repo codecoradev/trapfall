@@ -93,7 +93,7 @@
 					<p class="text-sm text-destructive">{passwordError}</p>
 				{/if}
 				{#if passwordSuccess}
-					<p class="text-sm text-emerald-500">{passwordSuccess}</p>
+					<p class="text-sm text-success">{passwordSuccess}</p>
 				{/if}
 
 				<Button type="submit">Update Password</Button>
