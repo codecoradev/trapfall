@@ -186,7 +186,7 @@
 
 <div class="p-4 lg:p-6 space-y-4">
 	<!-- Header -->
-	<div class="flex items-center justify-between">
+	<div class="flex flex-wrap items-center justify-between gap-2">
 		<h1 class="text-2xl font-bold">Release Health</h1>
 		<div class="flex items-center gap-2">
 			{#if projects.length > 1}
@@ -213,7 +213,7 @@
 			oninput={(e) => setRelease((e.target as HTMLInputElement).value)}
 			onkeydown={onReleaseKeydown}
 			placeholder="Filter by release version..."
-			class="h-8 w-56 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
+			class="h-8 w-full sm:w-56 rounded-md border border-input bg-background px-3 text-xs placeholder:text-muted-foreground"
 		/>
 
 		<div class="flex rounded-md border overflow-hidden">
@@ -349,16 +349,16 @@
 			</p>
 		</div>
 	{:else}
-		<div class="rounded-lg border">
+		<div class="rounded-lg border overflow-x-auto">
 			<Table>
 				<TableHeader>
 					<TableRow>
 						<TableHead>Release</TableHead>
 						<TableHead>Environment</TableHead>
 						<TableHead>Crash Rate</TableHead>
-						<TableHead class="text-center">Exited</TableHead>
-						<TableHead class="text-center">Errored</TableHead>
-						<TableHead class="text-center">Abnormal</TableHead>
+						<TableHead class="hidden md:table-cell text-center">Exited</TableHead>
+						<TableHead class="hidden md:table-cell text-center">Errored</TableHead>
+						<TableHead class="hidden md:table-cell text-center">Abnormal</TableHead>
 						<TableHead class="text-center">Crashed</TableHead>
 						<TableHead>Started</TableHead>
 					</TableRow>
@@ -379,13 +379,13 @@
 									{s.crash_rate !== null ? s.crash_rate.toFixed(2) + '%' : '—'}
 								</span>
 							</TableCell>
-							<TableCell class="text-center text-green-600 dark:text-green-400 font-medium">
+							<TableCell class="hidden md:table-cell text-center text-green-600 dark:text-green-400 font-medium">
 								{s.exited}
 							</TableCell>
-							<TableCell class="text-center text-yellow-600 dark:text-yellow-400 font-medium">
+							<TableCell class="hidden md:table-cell text-center text-yellow-600 dark:text-yellow-400 font-medium">
 								{s.errored}
 							</TableCell>
-							<TableCell class="text-center text-orange-600 dark:text-orange-400 font-medium">
+							<TableCell class="hidden md:table-cell text-center text-orange-600 dark:text-orange-400 font-medium">
 								{s.abnormal}
 							</TableCell>
 							<TableCell class="text-center text-red-600 dark:text-red-400 font-medium">

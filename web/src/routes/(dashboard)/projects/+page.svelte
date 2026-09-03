@@ -160,7 +160,7 @@
 <svelte:window onclick={closeMenuOnOutsideClick} />
 
 <div class="p-4 lg:p-6 space-y-4">
-	<div class="flex items-center justify-between">
+	<div class="flex flex-wrap items-center justify-between gap-2">
 		<div class="flex items-center gap-3">
 			<h1 class="text-2xl font-bold">Projects</h1>
 			<!-- Tab switch -->
@@ -318,7 +318,7 @@
 						{#if !project.archived_at}
 							<div>
 								<p class="text-xs text-muted-foreground mb-1">DSN (use this in your SDK)</p>
-								<div class="flex items-center gap-2">
+								<div class="flex items-center gap-2 min-w-0">
 									<code class="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
 										{#if showDsn[project.id]}
 											{revealedDsn[project.id] ?? 'Loading…'}
