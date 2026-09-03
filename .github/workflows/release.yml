@@ -15,6 +15,11 @@ jobs:
     name: Sync main branch
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    # Best effort only: the main-protected ruleset (pull_request +
+    # required_status_checks) rejects direct pushes, so this fails until an
+    # admin allows the automation in Settings -> Rules -> Rulesets. It must
+    # never block binaries, the ghcr image, or the GitHub release.
+    continue-on-error: true
     permissions:
       contents: write
     steps:
