@@ -320,6 +320,31 @@ class ApiClient {
 		return this.get<string[]>(`/projects/${projectSlug}/environments`);
 	}
 
+	// ── Alert Rules ─────────────────────────────────────────────────
+
+	async listAlertRules(projectSlug: string): Promise<AlertRule[]> {
+		return this.get<AlertRule[]>(`/projects/${projectSlug}/rules`);
+	}
+
+	async createAlertRule(projectSlug: string, rule: CreateAlertRule): Promise<AlertRule> {
+		return this.post<AlertRule>(`/projects/${projectSlug}/rules`, rule);
+	}
+
+	async deleteAlertRule(ruleId: string): Promise<void> {
+		await this.delete(`/rules/${ruleId}`);
+	}
+
+	async toggleAlertRule(ruleId: string, enabled: boolean): Promise<void> {
+		await this.post(`/rules/${ruleId}/toggle`, { enabled });
+	}
+
+	// ── Attachments ─────────────────────────────────────────────────
+
+	async listAttachments(eventId: string): Promise<AttachmentItem[]> {
+		const data = await this.get<{ items?: AttachmentItem[] }>(`/events/${eventId}/attachments`);
+		return data.items || [];
+	}
+
 	async getPublicConfig(): Promise<PublicConfig> {
 		return this.get<PublicConfig>('/config');
 	}
@@ -357,46 +382,7 @@ export interface CreateAlertRule {
 	cooldown_seconds?: number;
 }
 
-// ── Standalone API Functions (not yet on ApiClient) ─────────────────────
-// These use raw fetch to match the existing auth pattern.
-// TODO: migrate into ApiClient class methods.
-
-export async function listAlertRules(projectSlug: string): Promise<AlertRule[]> {
-	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`);
-	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
-	if (!res.ok) throw new ApiClientError(res.status, await res.text());
-	return res.json();
-}
-
-export async function createAlertRule(
-	projectSlug: string,
-	rule: CreateAlertRule
-): Promise<AlertRule> {
-	const res = await fetch(`${API_BASE}/projects/${projectSlug}/rules`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(rule)
-	});
-	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
-	if (!res.ok) throw new ApiClientError(res.status, await res.text());
-	return res.json();
-}
-
-export async function deleteAlertRule(ruleId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/rules/${ruleId}`, { method: 'DELETE' });
-	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
-	if (!res.ok && res.status !== 200) throw new ApiClientError(res.status, await res.text());
-}
-
-export async function toggleAlertRule(ruleId: string, enabled: boolean): Promise<void> {
-	const res = await fetch(`${API_BASE}/rules/${ruleId}/toggle`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ enabled })
-	});
-	if (res.status === 401) { gotoLogin(); throw new ApiClientError(401, 'Not authenticated'); }
-	if (!res.ok) throw new ApiClientError(res.status, await res.text());
-}
+// ── Standalone API helpers ──────────────────────────────────────────────
 
 export const api = new ApiClient();
 
@@ -410,14 +396,6 @@ export interface AttachmentItem {
 	attachment_type: string | null;
 	size_bytes: number;
 	created_at: string;
-}
-
-export async function fetchAttachments(eventId: string): Promise<AttachmentItem[]> {
-	const res = await fetch(`${API_BASE}/events/${eventId}/attachments`);
-	if (res.status === 401) { gotoLogin(); throw new Error('Not authenticated'); }
-	if (!res.ok) return [];
-	const data = await res.json();
-	return data.items || [];
 }
 
 export function getAttachmentDownloadUrl(attachmentId: string): string {

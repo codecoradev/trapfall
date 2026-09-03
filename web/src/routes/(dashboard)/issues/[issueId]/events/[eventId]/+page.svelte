@@ -2,8 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, type StoredEvent, type Issue } from '$lib/api';
-	import { fetchAttachments, type AttachmentItem } from '$lib/api';
+	import { api, type StoredEvent, type Issue, type AttachmentItem } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
@@ -61,7 +60,7 @@
 			// Fetch attachments for this event
 			attachmentsLoading = true;
 			try {
-				attachments = await fetchAttachments(eventId);
+				attachments = await api.listAttachments(eventId);
 			} catch {
 				// Silently handle attachment fetch errors
 				attachments = [];
