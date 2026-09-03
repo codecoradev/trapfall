@@ -79,4 +79,33 @@ test.describe('Issue detail view', () => {
 			/culprit|stacktrace|stack trace|first seen|last seen|level/i.test(body);
 		expect(looksLikeIssueDetail).toBeTruthy();
 	});
+
+	test('lists events and navigates to the event detail view', async ({ page }) => {
+		await expect(issueRows(page).first()).toBeVisible({ timeout: 10000 });
+		await issueRows(page).first().click();
+		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+/i);
+
+		// The events table should render at least one event row.
+		const eventRows = page.locator('tr.cursor-pointer');
+		await expect(eventRows.first()).toBeVisible({ timeout: 10000 });
+
+		// Clicking an event row navigates to the event detail page.
+		await eventRows.first().click();
+		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+\/events\/[a-f0-9-]+/i);
+	});
+
+	test('resolve action updates the issue status badge', async ({ page }) => {
+		await expect(issueRows(page).first()).toBeVisible({ timeout: 10000 });
+		await issueRows(page).first().click();
+		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+/i);
+
+		const resolveBtn = page.getByRole('button', { name: 'Resolve' });
+		await expect(resolveBtn).toBeVisible({ timeout: 10000 });
+		await resolveBtn.click();
+
+		// After resolving, the status badge shows "resolved" and the primary
+		// action flips to Unresolve.
+		await expect(page.getByRole('button', { name: 'Unresolve' })).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('span.badge, span', { hasText: 'resolved' }).first()).toBeVisible();
+	});
 });
