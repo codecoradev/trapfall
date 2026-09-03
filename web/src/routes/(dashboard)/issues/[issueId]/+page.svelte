@@ -9,6 +9,7 @@
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
+	import Sparkline from '$lib/components/Sparkline.svelte';
 	import {
 		Table,
 		TableBody,
@@ -33,6 +34,25 @@
 	let projectSlug = $state('');
 
 	let totalEventPages: number = $derived(Math.max(1, Math.ceil(totalEvents / eventsPerPage)));
+
+	const BUCKET_DAYS = 14;
+	let eventBuckets: number[] = $state([]);
+	let bucketRange = $state('');
+
+	/** Bucket event timestamps into per-day counts for the last N days. */
+	function buildBuckets(sample: StoredEvent[]) {
+		const start = new Date();
+		start.setHours(0, 0, 0, 0);
+		start.setDate(start.getDate() - (BUCKET_DAYS - 1));
+		const counts = new Array<number>(BUCKET_DAYS).fill(0);
+		for (const e of sample) {
+			const idx = Math.floor((new Date(e.received_at).getTime() - start.getTime()) / 86400000);
+			if (idx >= 0 && idx < BUCKET_DAYS) counts[idx] += 1;
+		}
+		eventBuckets = counts;
+		const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+		bucketRange = `${fmt(start)} - ${fmt(new Date())}`;
+	}
 
 	/** Extract the first exception type/value from a Sentry-format event payload. */
 	function exceptionSummary(event: StoredEvent): { type: string; value: string } | null {
@@ -107,6 +127,9 @@
 		try {
 			issue = await api.getIssue(issueId);
 			await loadEvents(1);
+			// Non-critical: sample up to 100 events for the daily trend chart.
+			const sample = await api.listEvents(issueId, 1, 100).catch(() => null);
+			if (sample) buildBuckets(sample.data);
 		} catch (e: any) {
 			error = e?.message || 'Failed to load issue';
 		} finally {
@@ -224,6 +247,19 @@
 				</CardContent>
 			</Card>
 		</div>
+
+		<!-- Events per day -->
+		{#if eventBuckets.length > 0}
+			<Card>
+				<CardContent class="p-4 space-y-2">
+					<div class="flex items-center justify-between">
+						<p class="text-xs font-medium text-muted-foreground">Events, last {BUCKET_DAYS} days</p>
+						<span class="text-xs text-muted-foreground tabular-nums">{bucketRange}</span>
+					</div>
+					<Sparkline values={eventBuckets} label="Events per day over the last {BUCKET_DAYS} days" />
+				</CardContent>
+			</Card>
+		{/if}
 
 		<!-- Events -->
 		<div class="space-y-3">

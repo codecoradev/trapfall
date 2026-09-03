@@ -17,7 +17,7 @@
 		TableHeader,
 		TableRow
 	} from '$lib/components/ui/table/index.js';
-	import { timeAgo, crashRateColor } from '$lib/utils';
+	import { timeAgo, crashRateColor, crashRateBarClass } from '$lib/utils';
 
 	let projects: Project[] = $state([]);
 	let selectedProject: string = $state('');
@@ -291,7 +291,7 @@
 							{/if}
 							{#if aggregateAbnormal > 0}
 								<div
-									class="bg-orange-500 h-full"
+									class="bg-abnormal h-full"
 									style="width: {(aggregateAbnormal / aggregateTotal * 100)}%"
 								></div>
 							{/if}
@@ -314,8 +314,8 @@
 								<span class="text-muted-foreground">errored</span>
 							</span>
 							<span class="flex items-center gap-1.5">
-								<span class="h-2.5 w-2.5 rounded-full bg-orange-500"></span>
-								<span class="text-orange-600 dark:text-orange-400 font-medium">{aggregateAbnormal}</span>
+								<span class="h-2.5 w-2.5 rounded-full bg-abnormal"></span>
+								<span class="text-abnormal font-medium">{aggregateAbnormal}</span>
 								<span class="text-muted-foreground">abnormal</span>
 							</span>
 							<span class="flex items-center gap-1.5">
@@ -375,9 +375,19 @@
 								{/if}
 							</TableCell>
 							<TableCell>
-								<span class="font-mono font-medium {crashRateColor(s.crash_rate)}">
-									{s.crash_rate !== null ? s.crash_rate.toFixed(2) + '%' : '—'}
-								</span>
+								<div class="min-w-[88px] space-y-1">
+									<span class="font-mono font-medium tabular-nums {crashRateColor(s.crash_rate)}">
+										{s.crash_rate !== null ? s.crash_rate.toFixed(2) + '%' : '—'}
+									</span>
+									{#if s.crash_rate !== null}
+										<span class="block h-1.5 w-full rounded-full overflow-hidden bg-muted" aria-hidden="true">
+											<span
+												class="block h-full rounded-full {crashRateBarClass(s.crash_rate)}"
+												style="width: {Math.min(100, s.crash_rate)}%"
+											></span>
+										</span>
+									{/if}
+								</div>
 							</TableCell>
 							<TableCell class="hidden md:table-cell text-center text-success font-medium">
 								{s.exited}
@@ -385,7 +395,7 @@
 							<TableCell class="hidden md:table-cell text-center text-warning font-medium">
 								{s.errored}
 							</TableCell>
-							<TableCell class="hidden md:table-cell text-center text-orange-600 dark:text-orange-400 font-medium">
+							<TableCell class="hidden md:table-cell text-center text-abnormal font-medium">
 								{s.abnormal}
 							</TableCell>
 							<TableCell class="text-center text-destructive font-medium">
