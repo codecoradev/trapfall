@@ -410,7 +410,11 @@
 			</Table>
 		</div>
 
-		<!-- Pagination -->
+		{#if !loading && !error}
+		<p class="sr-only" role="status">{totalSessions} sessions loaded</p>
+	{/if}
+
+	<!-- Pagination -->
 		<Pagination page={currentPage} {totalPages} total={totalSessions} {perPage} onPageChange={goToPage} />
 	{/if}
 </div>
