@@ -398,6 +398,11 @@ mod tests {
         assert!(cfg.max_ingest_body_bytes < cfg.max_body_bytes, "ingest limit must be tighter than general API limit");
     }
 
+    /// Serializes tests that mutate `TRAPFALL_RETENTION_DAYS`: cargo runs
+    /// tests on parallel threads and env vars are process-global, so two
+    /// tests touching the same var race and fail intermittently.
+    static RETENTION_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn retention_days_default() {
         assert_eq!(default_retention_days(), 90);
@@ -407,7 +412,7 @@ mod tests {
 
     #[test]
     fn retention_days_custom_env() {
-        // SAFETY: single-threaded test, no other code reads this env var concurrently.
+        let _guard = RETENTION_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         unsafe {
             std::env::set_var("TRAPFALL_RETENTION_DAYS", "30");
         }
@@ -419,7 +424,7 @@ mod tests {
 
     #[test]
     fn retention_days_invalid_falls_back() {
-        // SAFETY: single-threaded test, no other code reads this env var concurrently.
+        let _guard = RETENTION_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         unsafe {
             std::env::set_var("TRAPFALL_RETENTION_DAYS", "abc");
         }
