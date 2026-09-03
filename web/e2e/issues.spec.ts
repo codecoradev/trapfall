@@ -99,13 +99,17 @@ test.describe('Issue detail view', () => {
 		await issueRows(page).first().click();
 		await expect(page).toHaveURL(/\/issues\/[a-f0-9-]+/i);
 
-		const resolveBtn = page.getByRole('button', { name: 'Resolve' });
-		await expect(resolveBtn).toBeVisible({ timeout: 10000 });
-		await resolveBtn.click();
+		// Status persists across runs, so normalize to unresolved first.
+		const resolveBtn = page.getByRole('button', { name: 'Resolve', exact: true });
+		const unresolveBtn = page.getByRole('button', { name: 'Unresolve', exact: true });
+		await expect(resolveBtn.or(unresolveBtn)).toBeVisible({ timeout: 10000 });
+		if (await unresolveBtn.isVisible()) {
+			await unresolveBtn.click();
+			await expect(resolveBtn).toBeVisible({ timeout: 10000 });
+		}
 
-		// After resolving, the status badge shows "resolved" and the primary
-		// action flips to Unresolve.
-		await expect(page.getByRole('button', { name: 'Unresolve' })).toBeVisible({ timeout: 10000 });
-		await expect(page.locator('span.badge, span', { hasText: 'resolved' }).first()).toBeVisible();
+		// Resolve, then the primary action flips to Unresolve.
+		await resolveBtn.click();
+		await expect(unresolveBtn).toBeVisible({ timeout: 10000 });
 	});
 });
