@@ -340,20 +340,27 @@ async fn rotate_dsn(
     Ok(Json(updated))
 }
 
+#[derive(Deserialize, Default)]
+struct IngestAuthQuery {
+    sentry_key: Option<String>,
+}
+
 async fn ingest_envelope(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
+    Query(query): Query<IngestAuthQuery>,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> StatusCode {
+) -> axum::response::Response {
     tracing::info!("Ingest request: project_id={project_id} body_len={}", body.len());
     if !state.rate_limiter.try_consume(&project_id, 1.0) {
-        return StatusCode::TOO_MANY_REQUESTS;
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
 
     // Validate DSN key from Authorization header
     let store = state.store.clone();
-    // Extract DSN key: try X-Sentry-Auth header first, then Authorization Bearer
+    // Extract DSN key: X-Sentry-Auth header, then Authorization Bearer, then
+    // `sentry_key` query param (JS SDKs). Header takes precedence.
     let dsn_key = headers
         .get("x-sentry-auth")
         .and_then(|v| v.to_str().ok())
@@ -363,10 +370,11 @@ async fn ingest_envelope(
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.strip_prefix("Bearer ").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
-        });
+        })
+        .or_else(|| query.sentry_key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()));
     let dsn_key = match dsn_key {
         Some(k) => k,
-        None => return StatusCode::UNAUTHORIZED,
+        None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
     // Verify DSN key matches project
@@ -374,26 +382,26 @@ async fn ingest_envelope(
         Ok(Some(p)) => p,
         Ok(None) => {
             tracing::warn!("Project not found by id: {project_id}");
-            return StatusCode::NOT_FOUND;
+            return StatusCode::NOT_FOUND.into_response();
         }
         Err(e) => {
             tracing::error!("DB error looking up project: {e}");
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
     match store.get_project_by_dsn_key(&dsn_key).await {
         Ok(Some(p)) if p.id == project.id => {}
         Ok(Some(p)) => {
             tracing::warn!("DSN key mismatch: expected project {} got {}", project.id, p.id);
-            return StatusCode::UNAUTHORIZED;
+            return StatusCode::UNAUTHORIZED.into_response();
         }
         Ok(None) => {
             tracing::warn!("No project found for DSN key");
-            return StatusCode::UNAUTHORIZED;
+            return StatusCode::UNAUTHORIZED.into_response();
         }
         Err(e) => {
             tracing::error!("DB error checking DSN key: {e}");
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
 
@@ -409,7 +417,7 @@ async fn ingest_envelope(
         }
         Err(e) => {
             tracing::warn!("Failed to parse envelope: {e}");
-            return StatusCode::BAD_REQUEST;
+            return StatusCode::BAD_REQUEST.into_response();
         }
     };
 
@@ -473,8 +481,16 @@ async fn ingest_envelope(
         tracing::info!("Skipping {} attachment(s): no events to associate with", parsed.attachments.len());
     }
 
+    // Sentry SDKs expect `{"id": "<event_id>"}` in the response body.
+    let response_id = parsed
+        .events
+        .first()
+        .map(|e| e.event_id.clone())
+        .or_else(|| parsed.transactions.first().map(|t| t.event_id.clone()))
+        .unwrap_or_default();
+
     if parsed.events.is_empty() && parsed.transactions.is_empty() {
-        return StatusCode::OK;
+        return Json(serde_json::json!({ "id": response_id })).into_response();
     }
 
     let mut accepted = 0;
@@ -491,13 +507,13 @@ async fn ingest_envelope(
             Ok(()) => accepted += 1,
             Err(e) => {
                 tracing::warn!("Ingest channel full or closed: {e}");
-                return StatusCode::SERVICE_UNAVAILABLE;
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
         }
     }
 
     tracing::info!("Accepted {accepted} events for project {project_id}");
-    StatusCode::OK
+    Json(serde_json::json!({ "id": response_id })).into_response()
 }
 
 // ── Issue / Event Handlers ──────────────────────────────────────────────

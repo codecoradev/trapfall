@@ -818,3 +818,61 @@ async fn parse_transaction_envelope() {
     assert_eq!(result.transactions.len(), 1, "expected 1 transaction parsed, got {}", result.transactions.len());
     assert_eq!(result.transactions[0].transaction, "GET /api/health");
 }
+
+async fn post_envelope(app: &Router, uri: String, header: Option<(&str, &str)>) -> axum::response::Response {
+    let mut b = Request::builder().method("POST").uri(uri).header("content-type", "application/octet-stream");
+    if let Some((k, v)) = header {
+        b = b.header(k, v);
+    }
+    app.clone().oneshot(b.body(Body::from(make_envelope_body("Error", "test"))).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn ingest_accepts_x_sentry_auth_header() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let app = router(make_state(store, RateLimiter::default()));
+    for h in ["Sentry sentry_key=abc123, sentry_version=7", "Sentry sentry_key=abc123,sentry_version=7"] {
+        let resp = post_envelope(&app, format!("/api/{project_id}/envelope/"), Some(("x-sentry-auth", h))).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn ingest_accepts_sentry_key_query_param() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let app = router(make_state(store, RateLimiter::default()));
+    let resp =
+        post_envelope(&app, format!("/api/{project_id}/envelope/?sentry_key=abc123&sentry_version=7"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(json["id"].is_string());
+}
+
+#[tokio::test]
+async fn ingest_query_param_invalid_or_empty_key_returns_401() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let app = router(make_state(store, RateLimiter::default()));
+    for q in ["sentry_key=wrong", "sentry_key=", "sentry_version=7"] {
+        let resp = post_envelope(&app, format!("/api/{project_id}/envelope/?{q}"), None).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "query {q}");
+    }
+}
+
+#[tokio::test]
+async fn ingest_header_takes_precedence_over_query_param() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let app = router(make_state(store, RateLimiter::default()));
+    // Invalid header key + valid query key -> header wins -> 401
+    let resp = post_envelope(
+        &app,
+        format!("/api/{project_id}/envelope/?sentry_key=abc123"),
+        Some(("x-sentry-auth", "Sentry sentry_key=wrong, sentry_version=7")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
