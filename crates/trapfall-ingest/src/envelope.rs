@@ -276,7 +276,8 @@ pub fn extract_sentry_key(auth_header: &str) -> Option<String> {
     let header = auth_header.strip_prefix("Sentry ").unwrap_or(auth_header);
     header.split(',').find_map(|part| {
         let trimmed = part.trim();
-        trimmed.strip_prefix("sentry_key=").map(str::to_string)
+        let (k, v) = trimmed.split_once('=')?;
+        (k.trim() == "sentry_key").then(|| v.trim().to_string()).filter(|v| !v.is_empty())
     })
 }
 
@@ -412,6 +413,14 @@ mod tests {
         let header = "Sentry sentry_key=abc123, sentry_version=7";
         let key = extract_sentry_key(header).unwrap();
         assert_eq!(key, "abc123");
+    }
+
+    #[test]
+    fn extract_sentry_key_tolerates_whitespace() {
+        assert_eq!(extract_sentry_key("Sentry sentry_key=abc,sentry_version=7").as_deref(), Some("abc"));
+        assert_eq!(extract_sentry_key("Sentry sentry_version=7,sentry_key=abc").as_deref(), Some("abc"));
+        assert_eq!(extract_sentry_key("Sentry  sentry_version=7 ,  sentry_key = abc ").as_deref(), Some("abc"));
+        assert!(extract_sentry_key("Sentry sentry_key=").is_none());
     }
 
     #[test]
