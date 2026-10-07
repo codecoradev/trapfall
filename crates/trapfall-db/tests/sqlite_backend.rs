@@ -21,6 +21,11 @@ async fn sqlite_project_crud() {
 }
 
 #[tokio::test]
+async fn sqlite_project_seq_dsn() {
+    common::project_seq_dsn(setup().await).await;
+}
+
+#[tokio::test]
 async fn sqlite_issue_upsert_dedup() {
     common::issue_upsert_dedup(setup().await).await;
 }

@@ -105,6 +105,43 @@ async fn ingest_accepts_valid_envelope_with_dsn_key() {
 }
 
 #[tokio::test]
+async fn ingest_accepts_numeric_project_id_from_dsn() {
+    let store = test_store().await;
+    let uuid = seed_project(&store).await;
+    let project = store.get_project_by_id(&uuid).await.unwrap().unwrap();
+    let seq = project.dsn.rsplit('/').next().unwrap().to_string();
+    assert!(seq.bytes().all(|b| b.is_ascii_digit()), "DSN project id must be numeric: {}", project.dsn);
+    let app = router(make_state(store, RateLimiter::default()));
+
+    // Numeric (new DSN) path.
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{seq}/envelope/"))
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_envelope_body("TypeError", "numeric")))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::OK);
+
+    // Legacy UUID path still works.
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{uuid}/envelope/"))
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_envelope_body("TypeError", "legacy")))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::OK);
+
+    // Unknown numeric id -> 404.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/987654/envelope/")
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_envelope_body("TypeError", "missing")))
+        .unwrap();
+    assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn ingest_rejects_without_auth() {
     let store = test_store().await;
     let project_id = seed_project(&store).await;
@@ -838,6 +875,31 @@ async fn ingest_accepts_x_sentry_auth_header() {
     }
 }
 
+// ── Auth bypass regression (#329) ──────────────────────────────────────
+
+async fn status_of(app: &Router, method: &str, uri: &str, cookie: Option<&str>, body: &str) -> StatusCode {
+    let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+    if let Some(c) = cookie {
+        b = b.header("cookie", c);
+    }
+    app.clone().oneshot(b.body(Body::from(body.to_string())).unwrap()).await.unwrap().status()
+}
+
+#[tokio::test]
+// Note: unmatched paths (e.g. /api/0/projects/x/setup) hit the SPA fallback, outside
+// route_layer; `is_public_path` unit tests cover those lookalikes.
+async fn slug_lookalike_paths_require_auth() {
+    let app = router(make_state(test_store().await, RateLimiter::default()));
+    for uri in [
+        "/api/0/projects/setup",
+        "/api/0/projects/envelope/issues",
+        "/api/0/projects/setup/rules",
+        "/api/0/projects/envelope/search",
+    ] {
+        assert_eq!(status_of(&app, "GET", uri, None, "").await, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}
+
 #[tokio::test]
 async fn ingest_accepts_sentry_key_query_param() {
     let store = test_store().await;
@@ -875,4 +937,30 @@ async fn ingest_header_takes_precedence_over_query_param() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn real_public_routes_stay_reachable() {
+    let app = router(make_state(test_store().await, RateLimiter::default()));
+    for uri in ["/health", "/api/0/config", "/api/0/setup"] {
+        assert_eq!(status_of(&app, "GET", uri, None, "").await, StatusCode::OK, "{uri}");
+    }
+    // Login/logout are reachable (not blocked by auth middleware with 401 "Not authenticated").
+    assert_ne!(status_of(&app, "POST", "/api/0/auth/logout", None, "").await, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn reserved_slug_create_returns_400() {
+    let app = router(make_state(test_store().await, RateLimiter::default()));
+    let cookie = setup_and_get_cookie(&app).await;
+    for slug in ["setup", "envelope", "login", "Auth"] {
+        let body = format!(r#"{{"name":"P","slug":"{slug}"}}"#);
+        assert_eq!(
+            status_of(&app, "POST", "/api/0/projects", Some(&cookie), &body).await,
+            StatusCode::BAD_REQUEST,
+            "{slug}"
+        );
+    }
+    let ok = status_of(&app, "POST", "/api/0/projects", Some(&cookie), r#"{"name":"Fine","slug":"fine"}"#).await;
+    assert_eq!(ok, StatusCode::CREATED);
 }

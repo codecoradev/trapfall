@@ -146,6 +146,15 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     sqlx::query(include_str!("../../trapfalld/migrations/20260613000001_transactions.sql")).execute(pool).await?;
     sqlx::query(include_str!("../../trapfalld/migrations/20260627000001_release_health.sql")).execute(pool).await?;
     sqlx::query(include_str!("../../trapfalld/migrations/20260627000002_attachments.sql")).execute(pool).await?;
+    // Numeric project seq for DSNs (#328). ALTER TABLE ADD COLUMN is not idempotent in SQLite,
+    // so guard on pragma_table_info.
+    let has_seq: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name = 'seq'")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+    if !has_seq {
+        sqlx::query(include_str!("../../trapfalld/migrations/20260701000001_project_seq.sql")).execute(pool).await?;
+    }
     Ok(())
 }
 
@@ -169,6 +178,7 @@ pub async fn run_postgres_migrations(pool: &sqlx::PgPool) -> Result<()> {
     sqlx::query(include_str!("../migrations/postgres/003_transactions.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/004_release_health.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/005_attachments.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../migrations/postgres/006_project_seq.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -188,6 +198,18 @@ pub trait Database: Send + Sync {
     async fn get_project_by_slug(&self, slug: &str) -> Result<Option<Project>>;
     async fn get_project_by_id(&self, id: &str) -> Result<Option<Project>>;
     async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>>;
+    /// Look up a project by its numeric DSN sequence.
+    async fn get_project_by_seq(&self, seq: i64) -> Result<Option<Project>>;
+    /// Resolve the project path segment of an ingest URL: numeric `seq` first,
+    /// falling back to the legacy UUID id so DSNs issued before #328 keep working.
+    async fn resolve_project(&self, segment: &str) -> Result<Option<Project>> {
+        if let Some(seq) = crate::common::parse_project_seq(segment) {
+            if let Some(p) = self.get_project_by_seq(seq).await? {
+                return Ok(Some(p));
+            }
+        }
+        self.get_project_by_id(segment).await
+    }
     async fn list_projects(&self) -> Result<Vec<Project>>;
     async fn rotate_dsn(&self, project_id: &str) -> Result<String>;
     async fn archive_project(&self, project_id: &str) -> Result<()>;

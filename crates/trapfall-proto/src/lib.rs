@@ -97,7 +97,7 @@ pub struct Stacktrace {
 /// A breadcrumb event leading up to an error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Breadcrumb {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_timestamp", skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub bc_type: Option<String>,
@@ -133,7 +133,35 @@ pub struct Event {
     pub extra: serde_json::Value,
     #[serde(rename = "contexts", default)]
     pub contexts: serde_json::Value,
+    #[serde(default, deserialize_with = "deserialize_timestamp")]
     pub timestamp: Option<String>,
+}
+
+/// Deserialize a Sentry `timestamp` that may arrive as an RFC3339 string
+/// (Rust SDK) or as epoch seconds, integer or float (JavaScript/Python SDKs).
+///
+/// Numeric values are normalized to an RFC3339 string (UTC) so storage is
+/// unchanged. Null yields `None`; unparseable or out-of-range numbers also
+/// yield `None` rather than dropping the whole event.
+pub fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| match v {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Number(n) => if let Some(i) = n.as_i64() {
+            chrono::DateTime::from_timestamp(i, 0)
+        } else {
+            n.as_f64().filter(|f| f.is_finite()).and_then(|f| {
+                let secs = f.floor();
+                let nanos = ((f - secs) * 1e9).round().clamp(0.0, 999_999_999.0) as u32;
+                chrono::DateTime::from_timestamp(secs as i64, nanos)
+            })
+        }
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
+        _ => None,
+    }))
 }
 
 /// Deserialize a Sentry event `message` field that may arrive either as a
@@ -478,6 +506,44 @@ pub struct ParsedEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn event_ts(ts: &str) -> Event {
+        serde_json::from_str(&format!(r#"{{"event_id":"e1"{ts}}}"#)).unwrap()
+    }
+
+    #[test]
+    fn timestamp_accepts_float_epoch() {
+        let e = event_ts(r#","timestamp":1756278600.5"#);
+        assert_eq!(e.timestamp.as_deref(), Some("2025-08-27T07:10:00.500Z"));
+    }
+
+    #[test]
+    fn timestamp_accepts_int_epoch() {
+        let e = event_ts(r#","timestamp":1756278600"#);
+        assert_eq!(e.timestamp.as_deref(), Some("2025-08-27T07:10:00Z"));
+    }
+
+    #[test]
+    fn timestamp_accepts_rfc3339_string() {
+        let e = event_ts(r#","timestamp":"2026-08-27T07:52:30Z""#);
+        assert_eq!(e.timestamp.as_deref(), Some("2026-08-27T07:52:30Z"));
+    }
+
+    #[test]
+    fn timestamp_null_or_missing_is_none() {
+        assert!(event_ts(r#","timestamp":null"#).timestamp.is_none());
+        assert!(event_ts("").timestamp.is_none());
+    }
+
+    #[test]
+    fn breadcrumb_timestamp_accepts_numeric_and_missing() {
+        let b: Breadcrumb = serde_json::from_str(r#"{"timestamp":1756278600.25,"message":"x"}"#).unwrap();
+        assert_eq!(b.timestamp.as_deref(), Some("2025-08-27T07:10:00.250Z"));
+        let b: Breadcrumb = serde_json::from_str(r#"{"timestamp":1756278600,"message":"x"}"#).unwrap();
+        assert_eq!(b.timestamp.as_deref(), Some("2025-08-27T07:10:00Z"));
+        let b: Breadcrumb = serde_json::from_str(r#"{"message":"x"}"#).unwrap();
+        assert!(b.timestamp.is_none());
+    }
 
     #[test]
     fn issue_status_default_is_unresolved() {

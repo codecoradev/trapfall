@@ -315,6 +315,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_envelope_with_numeric_timestamps_ingests() {
+        // Real JS/Python SDKs send epoch numbers for event and breadcrumb timestamps.
+        let envelope = r#"{"event_id":"abc123","sent_at":"2026-08-27T00:00:00Z"}
+{"type":"event"}
+{"event_id":"abc123","timestamp":1756278600.5,"message":"boom","level":"error","breadcrumbs":{"values":[{"timestamp":1756278599,"category":"console","message":"hi"}]}}"#;
+
+        let result = parse_envelope_text(envelope).unwrap();
+        assert_eq!(result.events.len(), 1, "numeric timestamps must not drop the event");
+        let ev = &result.events[0];
+        assert_eq!(ev.timestamp.as_deref(), Some("2025-08-27T07:10:00.500Z"));
+        assert_eq!(ev.breadcrumbs.values[0].timestamp.as_deref(), Some("2025-08-27T07:09:59Z"));
+    }
+
+    #[test]
     fn parse_event_message_object_falls_back_to_message_key() {
         // When `formatted` is absent, fall back to the `message` template.
         let envelope = r#"{"event_id":"abc123","sent_at":"2026-07-01T00:00:00Z"}

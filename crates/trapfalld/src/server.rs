@@ -127,6 +127,44 @@ fn default_slowest_limit() -> i64 {
     5
 }
 
+/// Slugs that collide with route segments or public paths.
+const RESERVED_SLUGS: &[&str] = &[
+    "setup",
+    "envelope",
+    "login",
+    "logout",
+    "auth",
+    "config",
+    "health",
+    "metrics",
+    "api",
+    "admin",
+    "me",
+    "ws",
+    "projects",
+    "issues",
+    "events",
+    "rules",
+    "attachments",
+    "archive",
+    "search",
+];
+
+/// Reject empty, path-like or reserved project slugs.
+fn validate_project_slug(slug: &str) -> Result<(), (StatusCode, String)> {
+    let bad = |m: String| Err((StatusCode::BAD_REQUEST, m));
+    if slug.trim().is_empty() {
+        return bad("Project slug must not be empty".into());
+    }
+    if slug.contains('/') {
+        return bad("Project slug must not contain '/'".into());
+    }
+    if RESERVED_SLUGS.contains(&slug.to_ascii_lowercase().as_str()) {
+        return bad(format!("Project slug '{slug}' is reserved; choose a different slug"));
+    }
+    Ok(())
+}
+
 /// Build the Axum router.
 pub fn router(state: AppState) -> Router {
     // All API routes flat — no .nest() to avoid Axum 0.8 routing quirks.
@@ -217,9 +255,10 @@ async fn create_project(
     _user: AuthenticatedUser,
     headers: axum::http::HeaderMap,
     Json(req): Json<CreateProjectRequest>,
-) -> Result<(StatusCode, Json<trapfall_proto::Project>), StatusCode> {
+) -> Result<(StatusCode, Json<trapfall_proto::Project>), (StatusCode, String)> {
     let store = state.store.clone();
     let slug = req.slug.unwrap_or_else(|| req.name.to_lowercase().replace(' ', "-"));
+    validate_project_slug(&slug)?;
     // Prefer configured `public_url` (TRAPFALL_PUBLIC_URL) for DSN generation.
     // Fall back to the request Host header so local dev keeps working without
     // extra config (e.g. user accesses via http://localhost:9090).
@@ -229,7 +268,7 @@ async fn create_project(
         .unwrap_or_else(|| headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:9090").to_string());
     let project = store.create_project_with_host(&slug, &req.name, &host).await.map_err(|e| {
         tracing::warn!("Create project failed: {e}");
-        StatusCode::CONFLICT
+        (StatusCode::CONFLICT, "Project could not be created (slug may already exist)".to_string())
     })?;
     Ok((StatusCode::CREATED, Json(project)))
 }
@@ -255,15 +294,19 @@ async fn update_project(
     State(state): State<AppState>,
     Path(slug): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
-) -> Result<Json<trapfall_proto::Project>, StatusCode> {
+) -> Result<Json<trapfall_proto::Project>, (StatusCode, String)> {
+    validate_project_slug(&slug)?;
     let store = state.store.clone();
     let project = store
         .get_project_by_slug(&slug)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
     if let Some(name) = req.name {
-        let updated = store.update_project(&project.id, &name).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let updated = store
+            .update_project(&project.id, &name)
+            .await
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string()))?;
         Ok(Json(updated))
     } else {
         Ok(Json(project))
@@ -378,7 +421,7 @@ async fn ingest_envelope(
     };
 
     // Verify DSN key matches project
-    let project = match store.get_project_by_id(&project_id).await {
+    let project = match store.resolve_project(&project_id).await {
         Ok(Some(p)) => p,
         Ok(None) => {
             tracing::warn!("Project not found by id: {project_id}");
