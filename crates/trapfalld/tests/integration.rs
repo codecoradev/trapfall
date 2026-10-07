@@ -855,3 +855,54 @@ async fn parse_transaction_envelope() {
     assert_eq!(result.transactions.len(), 1, "expected 1 transaction parsed, got {}", result.transactions.len());
     assert_eq!(result.transactions[0].transaction, "GET /api/health");
 }
+
+// ── Auth bypass regression (#329) ──────────────────────────────────────
+
+async fn status_of(app: &Router, method: &str, uri: &str, cookie: Option<&str>, body: &str) -> StatusCode {
+    let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+    if let Some(c) = cookie {
+        b = b.header("cookie", c);
+    }
+    app.clone().oneshot(b.body(Body::from(body.to_string())).unwrap()).await.unwrap().status()
+}
+
+#[tokio::test]
+// Note: unmatched paths (e.g. /api/0/projects/x/setup) hit the SPA fallback, outside
+// route_layer; `is_public_path` unit tests cover those lookalikes.
+async fn slug_lookalike_paths_require_auth() {
+    let app = router(make_state(test_store().await, RateLimiter::default()));
+    for uri in [
+        "/api/0/projects/setup",
+        "/api/0/projects/envelope/issues",
+        "/api/0/projects/setup/rules",
+        "/api/0/projects/envelope/search",
+    ] {
+        assert_eq!(status_of(&app, "GET", uri, None, "").await, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn real_public_routes_stay_reachable() {
+    let app = router(make_state(test_store().await, RateLimiter::default()));
+    for uri in ["/health", "/api/0/config", "/api/0/setup"] {
+        assert_eq!(status_of(&app, "GET", uri, None, "").await, StatusCode::OK, "{uri}");
+    }
+    // Login/logout are reachable (not blocked by auth middleware with 401 "Not authenticated").
+    assert_ne!(status_of(&app, "POST", "/api/0/auth/logout", None, "").await, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn reserved_slug_create_returns_400() {
+    let app = router(make_state(test_store().await, RateLimiter::default()));
+    let cookie = setup_and_get_cookie(&app).await;
+    for slug in ["setup", "envelope", "login", "Auth"] {
+        let body = format!(r#"{{"name":"P","slug":"{slug}"}}"#);
+        assert_eq!(
+            status_of(&app, "POST", "/api/0/projects", Some(&cookie), &body).await,
+            StatusCode::BAD_REQUEST,
+            "{slug}"
+        );
+    }
+    let ok = status_of(&app, "POST", "/api/0/projects", Some(&cookie), r#"{"name":"Fine","slug":"fine"}"#).await;
+    assert_eq!(ok, StatusCode::CREATED);
+}
