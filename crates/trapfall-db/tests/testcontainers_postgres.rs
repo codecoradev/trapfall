@@ -73,6 +73,7 @@ macro_rules! tc_test {
 }
 
 tc_test!(tc_project_crud, common::project_crud);
+tc_test!(tc_project_seq_dsn, common::project_seq_dsn);
 tc_test!(tc_issue_upsert_dedup, common::issue_upsert_dedup);
 tc_test!(tc_event_operations, common::event_operations);
 tc_test!(tc_auth_and_sessions, common::auth_and_sessions);

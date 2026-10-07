@@ -50,18 +50,23 @@ impl Database for SqliteBackend {
 
     async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {
         let id = new_id();
-        let dsn = generate_dsn_with(host, &id);
+        let seq: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) + 1 FROM projects").fetch_one(&self.pool).await?;
+        let dsn = generate_dsn_with(host, seq);
         let dsn_key = extract_dsn_key(&dsn);
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(&id)
-            .bind(slug)
-            .bind(name)
-            .bind(&dsn_key)
-            .bind(&dsn)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at, seq) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(slug)
+        .bind(name)
+        .bind(&dsn_key)
+        .bind(&dsn)
+        .bind(&now)
+        .bind(seq)
+        .execute(&self.pool)
+        .await?;
 
         Ok(Project { id, slug: slug.to_string(), name: name.to_string(), dsn, created_at: now, archived_at: None })
     }
@@ -82,6 +87,17 @@ impl Database for SqliteBackend {
             "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE id = ?",
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
+    }
+
+    async fn get_project_by_seq(&self, seq: i64) -> Result<Option<Project>> {
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE seq = ?",
+        )
+        .bind(seq)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -116,7 +132,9 @@ impl Database for SqliteBackend {
             .nth(1)
             .map(|s| s.split('/').next().unwrap_or("localhost:9090"))
             .unwrap_or("localhost:9090");
-        let new_dsn = generate_dsn_with(host, project_id);
+        let seq: i64 =
+            sqlx::query_scalar("SELECT seq FROM projects WHERE id = ?").bind(project_id).fetch_one(&self.pool).await?;
+        let new_dsn = generate_dsn_with(host, seq);
         let new_dsn_key = extract_dsn_key(&new_dsn);
         sqlx::query("UPDATE projects SET dsn = ?, dsn_key = ? WHERE id = ?")
             .bind(&new_dsn)
@@ -1090,7 +1108,55 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../trapfalld/migrations/20260701000001_project_seq.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         SqliteBackend::new(pool)
+    }
+
+    #[tokio::test]
+    async fn test_seq_backfill_for_legacy_projects() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        // Pre-#328 schema: no seq column.
+        sqlx::query(include_str!("../../trapfalld/migrations/20260606000001_initial.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, slug) in [("legacy-uuid-a", "a"), ("legacy-uuid-b", "b")] {
+            sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES (?, ?, ?, 'k', 'https://k@h/x', 'now')")
+                .bind(id)
+                .bind(slug)
+                .bind(slug)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        crate::run_sqlite_migrations(&pool).await.unwrap();
+        // Idempotent on restart.
+        crate::run_sqlite_migrations(&pool).await.unwrap();
+
+        let db = SqliteBackend::new(pool);
+        assert_eq!(db.resolve_project("1").await.unwrap().unwrap().id, "legacy-uuid-a");
+        assert_eq!(db.resolve_project("2").await.unwrap().unwrap().id, "legacy-uuid-b");
+        // Legacy UUID DSNs still resolve.
+        assert_eq!(db.resolve_project("legacy-uuid-b").await.unwrap().unwrap().slug, "b");
+        // New projects continue the sequence and produce numeric DSNs.
+        let p = db.create_project("c", "C").await.unwrap();
+        assert!(p.dsn.ends_with("/3"), "got {}", p.dsn);
+        // Rotating a backfilled legacy project switches its DSN to the numeric id.
+        let rotated = db.rotate_dsn("legacy-uuid-a").await.unwrap();
+        assert!(rotated.ends_with("/1"), "got {rotated}");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_numeric_and_legacy_uuid() {
+        let db = open_backend().await;
+        let p = db.create_project("r", "R").await.unwrap();
+        let seq = p.dsn.rsplit('/').next().unwrap();
+        assert_eq!(db.resolve_project(seq).await.unwrap().unwrap().id, p.id);
+        assert_eq!(db.resolve_project(&p.id).await.unwrap().unwrap().id, p.id);
+        assert!(db.resolve_project("424242").await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -105,6 +105,43 @@ async fn ingest_accepts_valid_envelope_with_dsn_key() {
 }
 
 #[tokio::test]
+async fn ingest_accepts_numeric_project_id_from_dsn() {
+    let store = test_store().await;
+    let uuid = seed_project(&store).await;
+    let project = store.get_project_by_id(&uuid).await.unwrap().unwrap();
+    let seq = project.dsn.rsplit('/').next().unwrap().to_string();
+    assert!(seq.bytes().all(|b| b.is_ascii_digit()), "DSN project id must be numeric: {}", project.dsn);
+    let app = router(make_state(store, RateLimiter::default()));
+
+    // Numeric (new DSN) path.
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{seq}/envelope/"))
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_envelope_body("TypeError", "numeric")))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::OK);
+
+    // Legacy UUID path still works.
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{uuid}/envelope/"))
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_envelope_body("TypeError", "legacy")))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::OK);
+
+    // Unknown numeric id -> 404.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/987654/envelope/")
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_envelope_body("TypeError", "missing")))
+        .unwrap();
+    assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn ingest_rejects_without_auth() {
     let store = test_store().await;
     let project_id = seed_project(&store).await;

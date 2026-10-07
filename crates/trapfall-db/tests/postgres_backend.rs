@@ -56,6 +56,7 @@ macro_rules! pg_test {
 }
 
 pg_test!(pg_project_crud, common::project_crud);
+pg_test!(pg_project_seq_dsn, common::project_seq_dsn);
 pg_test!(pg_issue_upsert_dedup, common::issue_upsert_dedup);
 pg_test!(pg_event_operations, common::event_operations);
 pg_test!(pg_auth_and_sessions, common::auth_and_sessions);
