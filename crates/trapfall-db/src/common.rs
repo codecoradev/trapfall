@@ -202,15 +202,39 @@ pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-/// Generate a DSN with the given host and project ID.
-pub fn generate_dsn_with(host: &str, project_id: &str) -> String {
-    let key = Uuid::new_v4();
-    format!("https://{key}@{host}/{project_id}")
+/// Generate a DSN with the given host and numeric project sequence.
+///
+/// Sentry JS SDKs require the DSN path to be an all-digit project id, so the
+/// per-project `seq` (not the internal UUID) is rendered into the DSN.
+/// Format: `https://{key}@{host}/{seq}`.
+pub fn generate_dsn_with(host: &str, seq: i64) -> String {
+    generate_dsn_with_scheme("https", host, seq)
 }
 
-/// Extract the DSN key from a full DSN URL.
+/// Like [`generate_dsn_with`] but with an explicit URL scheme (`http`/`https`).
+pub fn generate_dsn_with_scheme(scheme: &str, host: &str, seq: i64) -> String {
+    let key = Uuid::new_v4();
+    format!("{scheme}://{key}@{host}/{seq}")
+}
+
+/// Extract the DSN key from a full DSN URL (any scheme, e.g. `http://` or `https://`).
 pub fn extract_dsn_key(dsn: &str) -> String {
-    dsn.split('@').next().unwrap_or("").trim_start_matches("https://").to_string()
+    let userinfo = dsn.split('@').next().unwrap_or("");
+    match userinfo.split_once("://") {
+        Some((_, key)) => key.to_string(),
+        None => userinfo.to_string(),
+    }
+}
+
+/// Parse a path segment as a numeric project sequence (all ASCII digits).
+///
+/// Returns `None` for UUIDs and any other non-numeric input so callers can
+/// fall back to legacy UUID resolution.
+pub fn parse_project_seq(segment: &str) -> Option<i64> {
+    if segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    segment.parse().ok()
 }
 
 /// Extract the host from a DSN URL.
@@ -372,4 +396,57 @@ pub struct AttachmentRow {
     pub size_bytes: i64,
     pub disk_path: String,
     pub created_at: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dsn_uses_numeric_project_id() {
+        let dsn = generate_dsn_with("trapfall.example.com", 7);
+        assert!(dsn.starts_with("https://"));
+        assert!(dsn.ends_with("@trapfall.example.com/7"));
+        let path = dsn.rsplit('/').next().unwrap();
+        assert!(path.bytes().all(|b| b.is_ascii_digit()));
+    }
+
+    #[test]
+    fn dsn_with_http_scheme() {
+        let dsn = generate_dsn_with_scheme("http", "localhost:9090", 1);
+        assert!(dsn.starts_with("http://"));
+        assert!(dsn.ends_with("@localhost:9090/1"));
+    }
+
+    #[test]
+    fn extract_key_handles_http_and_https() {
+        assert_eq!(extract_dsn_key("https://abc@h.example/1"), "abc");
+        assert_eq!(extract_dsn_key("http://abc@localhost:9090/1"), "abc");
+        assert_eq!(extract_dsn_key("abc@h/1"), "abc");
+        assert_eq!(extract_dsn_key(""), "");
+    }
+
+    #[test]
+    fn extract_key_roundtrips_generated_dsn() {
+        for scheme in ["http", "https"] {
+            let dsn = generate_dsn_with_scheme(scheme, "h:1", 3);
+            let key = extract_dsn_key(&dsn);
+            assert!(Uuid::parse_str(&key).is_ok(), "key should be a bare uuid, got {key}");
+        }
+    }
+
+    #[test]
+    fn extract_host_unchanged_for_numeric_dsn() {
+        assert_eq!(extract_dsn_host("http://k@localhost:9090/5"), "localhost:9090");
+    }
+
+    #[test]
+    fn parse_seq_numeric_only() {
+        assert_eq!(parse_project_seq("42"), Some(42));
+        assert_eq!(parse_project_seq(""), None);
+        assert_eq!(parse_project_seq("-1"), None);
+        assert_eq!(parse_project_seq("2e3c789d-98cc-4cee-b0d1-6ed51cab436b"), None);
+        assert_eq!(parse_project_seq("12abc"), None);
+        assert_eq!(parse_project_seq("99999999999999999999999"), None);
+    }
 }

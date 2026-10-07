@@ -53,18 +53,22 @@ impl Database for PostgresBackend {
 
     async fn create_project_with_host(&self, slug: &str, name: &str, host: &str) -> Result<Project> {
         let id = new_id();
-        let dsn = generate_dsn_with(host, &id);
+        let seq: i64 = sqlx::query_scalar("SELECT nextval('projects_seq_seq')").fetch_one(&self.pool).await?;
+        let dsn = generate_dsn_with(host, seq);
         let dsn_key = extract_dsn_key(&dsn);
         let now = now_rfc3339();
-        sqlx::query("INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at) VALUES ($1, $2, $3, $4, $5, $6)")
-            .bind(&id)
-            .bind(slug)
-            .bind(name)
-            .bind(&dsn_key)
-            .bind(&dsn)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO projects (id, slug, name, dsn_key, dsn, created_at, seq) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&id)
+        .bind(slug)
+        .bind(name)
+        .bind(&dsn_key)
+        .bind(&dsn)
+        .bind(&now)
+        .bind(seq)
+        .execute(&self.pool)
+        .await?;
 
         Ok(Project { id, slug: slug.to_string(), name: name.to_string(), dsn, created_at: now, archived_at: None })
     }
@@ -85,6 +89,17 @@ impl Database for PostgresBackend {
             "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE id = $1",
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
+    }
+
+    async fn get_project_by_seq(&self, seq: i64) -> Result<Option<Project>> {
+        let row = sqlx::query_as::<_, ProjectRow>(
+            "SELECT id, slug, name, dsn, created_at, archived_at FROM projects WHERE seq = $1",
+        )
+        .bind(seq)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -114,7 +129,9 @@ impl Database for PostgresBackend {
     async fn rotate_dsn(&self, project_id: &str) -> Result<String> {
         let project = self.get_project_by_id(project_id).await?.ok_or_else(|| anyhow::anyhow!("Project not found"))?;
         let host = extract_dsn_host(&project.dsn);
-        let new_dsn = generate_dsn_with(&host, project_id);
+        let seq: i64 =
+            sqlx::query_scalar("SELECT seq FROM projects WHERE id = $1").bind(project_id).fetch_one(&self.pool).await?;
+        let new_dsn = generate_dsn_with(&host, seq);
         let new_dsn_key = extract_dsn_key(&new_dsn);
         sqlx::query("UPDATE projects SET dsn = $1, dsn_key = $2 WHERE id = $3")
             .bind(&new_dsn)

@@ -70,6 +70,40 @@ pub async fn project_crud(db: Arc<dyn Database>) {
     assert!(gone.is_none());
 }
 
+// ── Numeric project seq / DSN resolution (#328) ───────────────────────
+
+pub async fn project_seq_dsn(db: Arc<dyn Database>) {
+    let a = db.create_project("seq-a", "Seq A").await.unwrap();
+    let b = db.create_project("seq-b", "Seq B").await.unwrap();
+
+    // DSN path is all-digit and distinct per project.
+    let path = |dsn: &str| dsn.rsplit('/').next().unwrap().to_string();
+    let (seq_a, seq_b) = (path(&a.dsn), path(&b.dsn));
+    assert!(seq_a.bytes().all(|c| c.is_ascii_digit()), "dsn path must be numeric: {}", a.dsn);
+    assert!(seq_b.bytes().all(|c| c.is_ascii_digit()), "dsn path must be numeric: {}", b.dsn);
+    assert_ne!(seq_a, seq_b);
+    assert!(seq_b.parse::<i64>().unwrap() > seq_a.parse::<i64>().unwrap(), "seq auto-increments");
+
+    // Numeric resolution.
+    let by_seq = db.resolve_project(&seq_a).await.unwrap().unwrap();
+    assert_eq!(by_seq.id, a.id);
+    assert_eq!(db.get_project_by_seq(seq_b.parse().unwrap()).await.unwrap().unwrap().id, b.id);
+
+    // Legacy UUID resolution keeps working.
+    assert_eq!(db.resolve_project(&a.id).await.unwrap().unwrap().id, a.id);
+
+    // Unknown ids resolve to None.
+    assert!(db.resolve_project("999999").await.unwrap().is_none());
+    assert!(db.resolve_project("not-a-project").await.unwrap().is_none());
+
+    // Rotation changes the key but keeps the numeric project id.
+    let rotated = db.rotate_dsn(&a.id).await.unwrap();
+    assert_ne!(rotated, a.dsn);
+    assert_eq!(path(&rotated), seq_a);
+    let new_key = rotated.split('@').next().unwrap().trim_start_matches("https://");
+    assert_eq!(db.get_project_by_dsn_key(new_key).await.unwrap().unwrap().id, a.id);
+}
+
 // ── Issue Upsert + Dedup ──────────────────────────────────────────────
 
 pub async fn issue_upsert_dedup(db: Arc<dyn Database>) {
@@ -334,6 +368,7 @@ pub async fn ping(db: Arc<dyn Database>) {
 /// Run all shared tests against the given backend.
 pub async fn run_all(db: Arc<dyn Database>) {
     project_crud(db.clone()).await;
+    project_seq_dsn(db.clone()).await;
     issue_upsert_dedup(db.clone()).await;
     event_operations(db.clone()).await;
     auth_and_sessions(db.clone()).await;

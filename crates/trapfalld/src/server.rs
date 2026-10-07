@@ -413,7 +413,7 @@ async fn ingest_envelope(
     };
 
     // Verify DSN key matches project
-    let project = match store.get_project_by_id(&project_id).await {
+    let project = match store.resolve_project(&project_id).await {
         Ok(Some(p)) => p,
         Ok(None) => {
             tracing::warn!("Project not found by id: {project_id}");

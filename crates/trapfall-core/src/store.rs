@@ -45,6 +45,11 @@ impl Store {
         self.db.get_project_by_id(id).await
     }
 
+    /// Resolve an ingest URL project segment: numeric DSN seq first, then legacy UUID.
+    pub async fn resolve_project(&self, segment: &str) -> Result<Option<Project>> {
+        self.db.resolve_project(segment).await
+    }
+
     pub async fn get_project_by_dsn_key(&self, sentry_key: &str) -> Result<Option<Project>> {
         self.db.get_project_by_dsn_key(sentry_key).await
     }
