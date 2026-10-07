@@ -237,17 +237,31 @@ pub async fn change_password(
 
 // ── Middleware ──────────────────────────────────────────────────────────
 
+/// Exact public routes (no authentication required).
+const PUBLIC_PATHS: &[&str] =
+    &["/health", "/metrics", "/api/0/config", "/api/0/setup", "/api/0/auth/login", "/api/0/auth/logout"];
+
+/// Whether `path` is public. Uses exact matching (never suffix/substring), so
+/// project slugs like `setup` or `envelope` cannot bypass authentication.
+/// The ingest route `/api/{project_id}/envelope/` is matched by path segments.
+pub(crate) fn is_public_path(path: &str) -> bool {
+    if PUBLIC_PATHS.contains(&path) {
+        return true;
+    }
+    // Ingest: exactly api / {id} / envelope, with an optional trailing slash.
+    let trimmed = path.strip_suffix('/').unwrap_or(path);
+    let mut segs = trimmed.split('/');
+    matches!(
+        (segs.next(), segs.next(), segs.next(), segs.next(), segs.next(), segs.next()),
+        (Some(""), Some("api"), Some(id), Some("envelope"), None, None) if !id.is_empty()
+    )
+}
+
 /// Auth middleware — extracts session cookie, validates, injects user.
 pub async fn require_auth(State(state): State<AppState>, mut req: Request<axum::body::Body>, next: Next) -> Response {
     // Public routes that don't require authentication
     let path = req.uri().path();
-    let is_public = path.ends_with("/setup")
-        || path.ends_with("/auth/login")
-        || path.ends_with("/auth/logout")
-        || path == "/health"
-        || path == "/metrics"
-        || path == "/api/0/config"
-        || path.contains("/envelope/");
+    let is_public = is_public_path(path);
     if is_public {
         return next.run(req).await;
     }
@@ -309,4 +323,40 @@ pub fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<String> 
         }
     }
     None
+}
+
+#[cfg(test)]
+mod public_path_tests {
+    use super::is_public_path;
+
+    #[test]
+    fn exact_public_routes() {
+        for p in ["/health", "/metrics", "/api/0/config", "/api/0/setup", "/api/0/auth/login", "/api/0/auth/logout"] {
+            assert!(is_public_path(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn ingest_route_matched_by_segments() {
+        assert!(is_public_path("/api/42/envelope/"));
+        assert!(is_public_path("/api/42/envelope"));
+        assert!(!is_public_path("/api/0/projects/envelope/issues"));
+        assert!(!is_public_path("/api/42/envelope/extra"));
+        assert!(!is_public_path("/api//envelope/"));
+        assert!(!is_public_path("/x/api/42/envelope/"));
+    }
+
+    #[test]
+    fn slug_lookalikes_are_not_public() {
+        for p in [
+            "/api/0/projects/setup",
+            "/api/0/projects/x/setup",
+            "/api/0/projects/auth/login",
+            "/api/0/projects/x/auth/logout",
+            "/api/0/projects/envelope/issues",
+            "/api/0/projects/x/health",
+        ] {
+            assert!(!is_public_path(p), "{p}");
+        }
+    }
 }
