@@ -248,10 +248,79 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
     // HTTP server
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     info!("Listening on {listen}");
-    axum::serve(listener, trapfalld::server::router(state)).await?;
+    // Serving the router consumes `state` (and with it the only `ingest_tx`),
+    // so once graceful shutdown completes the digest channel is closed and the
+    // digest task drains its queue and flushes the final batch before exiting.
+    // Open connections (e.g. long-lived WebSockets) can stall graceful shutdown,
+    // so give them a bounded grace period and then drop the server regardless.
+    let stop = std::sync::Arc::new(tokio::sync::Notify::new());
+    let stop_rx = stop.clone();
+    let serve = axum::serve(listener, trapfalld::server::router(state)).with_graceful_shutdown(async move {
+        stop_rx.notified().await;
+    });
+    let mut server = Box::pin(std::future::IntoFuture::into_future(serve));
+    tokio::select! {
+        res = &mut server => {
+            if let Err(e) = res {
+                tracing::error!("HTTP server error: {e}");
+            }
+        }
+        _ = async {
+            shutdown_signal().await;
+            stop.notify_one();
+            tokio::time::sleep(HTTP_GRACE_TIMEOUT).await;
+        } => tracing::warn!("HTTP graceful shutdown timed out after {HTTP_GRACE_TIMEOUT:?}; dropping open connections"),
+    }
+    // Drop the server (and the router state holding `ingest_tx`) so the digest channel closes.
+    drop(server);
 
-    digest_handle.abort();
+    info!("HTTP server stopped, draining digest pipeline");
     retention_handle.abort();
+    match tokio::time::timeout(DIGEST_DRAIN_TIMEOUT, digest_handle).await {
+        Ok(Ok(())) => info!("Digest pipeline drained"),
+        Ok(Err(e)) => tracing::error!("Digest task join error: {e}"),
+        Err(_) => {
+            tracing::error!("Digest drain timed out after {DIGEST_DRAIN_TIMEOUT:?}; remaining events may be lost")
+        }
+    }
+    // The digest task owned the ws sender; once it exits the bridge ends on its own.
     bridge_handle.abort();
     Ok(())
+}
+
+/// Upper bound on how long shutdown waits for open HTTP connections to finish.
+const HTTP_GRACE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Upper bound on how long shutdown waits for the digest task to flush.
+const DIGEST_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Resolves when SIGINT (Ctrl-C) or SIGTERM is received.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!("Failed to install Ctrl-C handler: {e}");
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("Failed to install SIGTERM handler: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    info!("Shutdown signal received");
 }
