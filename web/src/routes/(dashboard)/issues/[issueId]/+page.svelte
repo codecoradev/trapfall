@@ -266,7 +266,12 @@
 			<div class="flex items-center justify-between">
 				<h2 class="text-lg font-semibold">Events</h2>
 				{#if totalEvents > 0}
-					<span class="text-xs text-muted-foreground tabular-nums">{totalEvents} total</span>
+					<div class="flex items-center gap-3">
+						<span class="text-xs text-muted-foreground tabular-nums">{totalEvents} total</span>
+						<Button variant="outline" size="sm" onclick={() => goto(`/issues/${issue!.id}/events/latest${projectSlug ? `?project=${projectSlug}` : ''}`)}>
+							View latest event
+						</Button>
+					</div>
 				{/if}
 			</div>
 

@@ -8,6 +8,8 @@
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import AttachmentCard from '$lib/components/AttachmentCard.svelte';
+	import EventDetail from '$lib/components/EventDetail.svelte';
+	import { neighbours } from '$lib/event-detail';
 
 	import { levelTextClass, statusTextClass, timeAgo } from '$lib/utils';
 
@@ -19,6 +21,46 @@
 	let error = $state('');
 
 	let projectSlug = $state('');
+	let events: StoredEvent[] = $state([]);
+	let issueId = '';
+
+	const currentId: string | null = $derived((event as StoredEvent | null)?.id ?? null);
+	const nav: { index: number; newer: StoredEvent | null; older: StoredEvent | null } = $derived(
+		currentId ? neighbours(events, currentId) : { index: -1, newer: null, older: null }
+	);
+
+	function eventHref(id: string) {
+		const qs = projectSlug ? '?project=' + projectSlug : '';
+		return `/issues/${issueId}/events/${id}${qs}`;
+	}
+
+	async function loadAttachments(id: string) {
+		attachmentsLoading = true;
+		try {
+			attachments = await api.listAttachments(id);
+		} catch {
+			// Silently handle attachment fetch errors
+			attachments = [];
+		} finally {
+			attachmentsLoading = false;
+		}
+	}
+
+	async function showEvent(eventId: string) {
+		const found = events.find((e) => e.id === eventId) || null;
+		if (!found) {
+			error = 'Event not found';
+			return;
+		}
+		event = found;
+		await loadAttachments(found.id);
+	}
+
+	async function go(target: StoredEvent | null) {
+		if (!target) return;
+		await goto(eventHref(target.id), { replaceState: false, noScroll: true });
+		await showEvent(target.id);
+	}
 
 	function goBack() {
 		if (projectSlug) {
@@ -29,44 +71,42 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		const el = e.target as HTMLElement | null;
+		if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
 		if (e.key === 'Escape') {
 			goBack();
 		}
 	}
 
 	onMount(async () => {
-		const issueId = page.params.issueId;
-		const eventId = page.params.eventId;
-		if (!issueId || !eventId) return;
+		const id = page.params.issueId;
+		const requested = page.params.eventId;
+		if (!id || !requested) return;
+		issueId = id;
 
 		projectSlug = page.url.searchParams.get('project') || '';
 
 		try {
-			// Load issue and events in parallel
-			const [issueData, eventsRes] = await Promise.all([
-				api.getIssue(issueId),
-				api.listEvents(issueId)
-			]);
+			// Load issue and events in parallel (events are newest first)
+			const [issueData, eventsRes] = await Promise.all([api.getIssue(id), api.listEvents(id, 1, 100)]);
 
 			issue = issueData;
-			event = eventsRes.data.find((e) => e.id === eventId) || null;
+			events = eventsRes.data;
 
-			if (!event) {
+			// "latest" is a valid event id: resolve to the newest event.
+			const targetId = requested === 'latest' ? events[0]?.id : requested;
+			const found = events.find((e) => e.id === targetId) || null;
+			if (!found) {
 				error = 'Event not found';
 				loading = false;
 				return;
 			}
-
-			// Fetch attachments for this event
-			attachmentsLoading = true;
-			try {
-				attachments = await api.listAttachments(eventId);
-			} catch {
-				// Silently handle attachment fetch errors
-				attachments = [];
-			} finally {
-				attachmentsLoading = false;
+			event = found;
+			if (requested === 'latest') {
+				await goto(eventHref(found.id), { replaceState: true, noScroll: true });
 			}
+			await loadAttachments(found.id);
 		} catch (e: any) {
 			error = e?.message || 'Failed to load event';
 		} finally {
@@ -123,20 +163,28 @@
 			<h1 class="text-xl font-bold">{issue.title}</h1>
 		</div>
 
+		<!-- Prev / next event navigation -->
+		<nav class="flex flex-wrap items-center gap-2" aria-label="Event navigation">
+			<Button variant="outline" size="sm" disabled={!nav.older} onclick={() => go(nav.older)} aria-label="Older event">
+				&#x2190; Older
+			</Button>
+			<Button variant="outline" size="sm" disabled={!nav.newer} onclick={() => go(nav.newer)} aria-label="Newer event">
+				Newer &#x2192;
+			</Button>
+			<Button variant="outline" size="sm" disabled={!events[0] || events[0].id === event.id} onclick={() => go(events[0] ?? null)}>
+				Latest
+			</Button>
+			{#if nav.index >= 0}
+				<span class="text-xs text-muted-foreground" aria-live="polite">
+					Event {events.length - nav.index} of {events.length}{issue.count > events.length ? ` loaded (${issue.count} total)` : ''}
+				</span>
+			{/if}
+		</nav>
+
 		<!-- Event Data -->
-		<Card>
-			<CardHeader class="pb-2">
-				<CardTitle class="text-sm font-mono">
-					Event Data
-				</CardTitle>
-			</CardHeader>
-			<CardContent>
-				{#if event.data?.message}
-					<p class="text-sm mb-2">{event.data.message as string}</p>
-				{/if}
-				<pre class="text-xs bg-muted p-3 rounded overflow-auto max-h-96">{JSON.stringify(event.data, null, 2)}</pre>
-			</CardContent>
-		</Card>
+		{#key event.id}
+			<EventDetail data={event.data} />
+		{/key}
 
 		<!-- Attachments Section -->
 		{#if attachmentsLoading}
