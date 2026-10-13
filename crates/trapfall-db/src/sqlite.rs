@@ -202,40 +202,27 @@ impl Database for SqliteBackend {
         culprit: Option<&str>,
         level: Level,
     ) -> Result<Issue> {
-        let level_str = level_to_str(level);
-        let now = chrono::Utc::now().to_rfc3339();
+        let mut conn = self.pool.acquire().await?;
+        upsert_issue_conn(&mut conn, project_id, fingerprint, title, culprit, level).await
+    }
 
-        // Atomic upsert via ON CONFLICT — avoids the SELECT-then-UPDATE race
-        // where two concurrent ingests could both read count=N and both write
-        // N+1 (lost update). The unique constraint on (project_id, fingerprint)
-        // makes this safe.
-        let row = sqlx::query_as::<_, IssueRow>(
-            "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) \n             VALUES (?, ?, ?, ?, ?, 'unresolved', ?, 1, 0, ?, ?) \n             ON CONFLICT(project_id, fingerprint) DO UPDATE SET \n                 count = count + 1,\n                 last_seen = excluded.last_seen,\n                 level = excluded.level\n             RETURNING id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen",
-        )
-        .bind(new_id())
-        .bind(project_id)
-        .bind(fingerprint)
-        .bind(title)
-        .bind(culprit)
-        .bind(&level_str)
-        .bind(&now)
-        .bind(&now)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(Issue {
-            id: row.id,
-            project_id: row.project_id,
-            fingerprint: row.fingerprint,
-            title: row.title,
-            culprit: row.culprit,
-            status: str_to_status(&row.status),
-            level,
-            count: row.count,
-            user_count: row.user_count,
-            first_seen: row.first_seen,
-            last_seen: row.last_seen,
-        })
+    async fn record_event(
+        &self,
+        project_id: &str,
+        fingerprint: &str,
+        title: &str,
+        culprit: Option<&str>,
+        level: Level,
+        event_data: &str,
+    ) -> Result<Issue> {
+        // One transaction: if the event insert fails the issue bump rolls back.
+        // The first statement is a write, so the deferred BEGIN takes the
+        // write lock immediately (no read->write upgrade BUSY under WAL).
+        let mut tx = self.pool.begin().await?;
+        let issue = upsert_issue_conn(&mut tx, project_id, fingerprint, title, culprit, level).await?;
+        insert_event_conn(&mut tx, &issue.id, project_id, event_data).await?;
+        tx.commit().await?;
+        Ok(issue)
     }
 
     async fn get_issue(&self, issue_id: &str) -> Result<Option<Issue>> {
@@ -327,17 +314,8 @@ impl Database for SqliteBackend {
     // ── Events ─────────────────────────────────────────────────────────
 
     async fn insert_event(&self, issue_id: &str, project_id: &str, event_data: &str) -> Result<String> {
-        let id = new_id();
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(&id)
-            .bind(issue_id)
-            .bind(project_id)
-            .bind(event_data)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
-        Ok(id)
+        let mut conn = self.pool.acquire().await?;
+        insert_event_conn(&mut conn, issue_id, project_id, event_data).await
     }
 
     async fn list_events(&self, issue_id: &str, limit: i64, offset: i64) -> Result<Vec<StoredEvent>> {
@@ -844,22 +822,32 @@ impl Database for SqliteBackend {
     // ── Retention ──────────────────────────────────────────────────────
 
     async fn purge_old_events(&self, days: i64) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM events WHERE received_at < datetime('now', ?)")
-            .bind(format!("-{days} days"))
+        // Bind an RFC3339 cutoff (same format as `received_at` writers):
+        // `datetime('now', ..)` uses a space separator and skews text compares.
+        let result = sqlx::query("DELETE FROM events WHERE received_at < ?")
+            .bind(cutoff_rfc3339_days(days))
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
     }
 
-    async fn purge_orphan_issues(&self) -> Result<()> {
-        sqlx::query("DELETE FROM issues WHERE id NOT IN (SELECT DISTINCT issue_id FROM events)")
-            .execute(&self.pool)
-            .await?;
+    async fn purge_orphan_issues(&self, days: i64) -> Result<()> {
+        // Single atomic statement. `last_seen < cutoff` protects an issue that
+        // was just upserted but whose event is not yet inserted; resolved and
+        // ignored issues are kept as history.
+        sqlx::query(
+            "DELETE FROM issues WHERE last_seen < ? AND status NOT IN ('resolved', 'ignored') \
+             AND NOT EXISTS (SELECT 1 FROM events WHERE events.issue_id = issues.id)",
+        )
+        .bind(cutoff_rfc3339_days(days))
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     async fn purge_stale_auth_attempts(&self) -> Result<()> {
-        sqlx::query("DELETE FROM auth_attempts WHERE created_at < datetime('now', '-30 days')")
+        sqlx::query("DELETE FROM auth_attempts WHERE created_at < ?")
+            .bind(cutoff_rfc3339_days(30))
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -1078,6 +1066,70 @@ impl Database for SqliteBackend {
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
+/// Atomic issue upsert on an existing connection/transaction.
+async fn upsert_issue_conn(
+    conn: &mut sqlx::SqliteConnection,
+    project_id: &str,
+    fingerprint: &str,
+    title: &str,
+    culprit: Option<&str>,
+    level: Level,
+) -> Result<Issue> {
+    let level_str = level_to_str(level);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Atomic upsert via ON CONFLICT: avoids the SELECT-then-UPDATE race where
+    // two concurrent ingests both read count=N and both write N+1 (lost
+    // update). The unique (project_id, fingerprint) constraint makes it safe.
+    let row = sqlx::query_as::<_, IssueRow>(
+        "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) \n             VALUES (?, ?, ?, ?, ?, 'unresolved', ?, 1, 0, ?, ?) \n             ON CONFLICT(project_id, fingerprint) DO UPDATE SET \n                 count = count + 1,\n                 last_seen = excluded.last_seen,\n                 level = excluded.level\n             RETURNING id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen",
+    )
+    .bind(new_id())
+    .bind(project_id)
+    .bind(fingerprint)
+    .bind(title)
+    .bind(culprit)
+    .bind(&level_str)
+    .bind(&now)
+    .bind(&now)
+    .fetch_one(&mut *conn)
+    .await?;
+
+    Ok(Issue {
+        id: row.id,
+        project_id: row.project_id,
+        fingerprint: row.fingerprint,
+        title: row.title,
+        culprit: row.culprit,
+        status: str_to_status(&row.status),
+        level,
+        count: row.count,
+        user_count: row.user_count,
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
+    })
+}
+
+/// Insert an event row on an existing connection/transaction.
+async fn insert_event_conn(
+    conn: &mut sqlx::SqliteConnection,
+    issue_id: &str,
+    project_id: &str,
+    event_data: &str,
+) -> Result<String> {
+    let id = new_id();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(&id)
+        .bind(issue_id)
+        .bind(project_id)
+        .bind(event_data)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await?;
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1113,6 +1165,92 @@ mod tests {
             .await
             .unwrap();
         SqliteBackend::new(pool)
+    }
+
+    #[tokio::test]
+    async fn test_record_event_is_atomic() {
+        let db = open_backend().await;
+        let p = db.create_project("atomic", "Atomic").await.unwrap();
+        sqlx::query("CREATE TRIGGER fail_ev BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'boom'); END")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let res = db.record_event(&p.id, "fp1", "T", None, Level::Error, "{}").await;
+        assert!(res.is_err());
+        // Issue upsert must have been rolled back with the failed event insert.
+        assert_eq!(db.count_issues(&p.id, None, None).await.unwrap(), 0);
+
+        sqlx::query("DROP TRIGGER fail_ev").execute(&db.pool).await.unwrap();
+        let issue = db.record_event(&p.id, "fp1", "T", None, Level::Error, "{}").await.unwrap();
+        assert_eq!(issue.count, 1);
+        assert_eq!(db.count_events(&issue.id).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_purge_old_events_cutoff_format() {
+        let db = open_backend().await;
+        let p = db.create_project("cutoff", "Cutoff").await.unwrap();
+        let issue = db.upsert_issue(&p.id, "fp", "T", None, Level::Error).await.unwrap();
+        let old = (chrono::Utc::now() - chrono::Duration::hours(25)).to_rfc3339();
+        let fresh = (chrono::Utc::now() - chrono::Duration::hours(23)).to_rfc3339();
+        for (id, ts) in [("old", &old), ("fresh", &fresh)] {
+            sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES (?, ?, ?, '{}', ?)")
+                .bind(id)
+                .bind(&issue.id)
+                .bind(&p.id)
+                .bind(ts)
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
+        // 25h-old event is past a 1-day retention; 23h-old is not.
+        assert_eq!(db.purge_old_events(1).await.unwrap(), 1);
+        assert_eq!(db.count_events(&issue.id).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_purge_stale_auth_attempts_cutoff_format() {
+        let db = open_backend().await;
+        let old = (chrono::Utc::now() - chrono::Duration::days(30) - chrono::Duration::hours(2)).to_rfc3339();
+        let fresh = (chrono::Utc::now() - chrono::Duration::days(30) + chrono::Duration::hours(2)).to_rfc3339();
+        for (id, ts) in [("a", &old), ("b", &fresh)] {
+            sqlx::query("INSERT INTO auth_attempts (id, email, ip, success, created_at) VALUES (?, 'e', 'i', 0, ?)")
+                .bind(id)
+                .bind(ts)
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
+        db.purge_stale_auth_attempts().await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM auth_attempts").fetch_one(&db.pool).await.unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn test_purge_orphan_issues_safety() {
+        let db = open_backend().await;
+        let p = db.create_project("orph", "Orph").await.unwrap();
+        let fresh = db.upsert_issue(&p.id, "fresh", "Fresh", None, Level::Error).await.unwrap();
+        let old = db.upsert_issue(&p.id, "old", "Old", None, Level::Error).await.unwrap();
+        let resolved = db.upsert_issue(&p.id, "res", "Resolved", None, Level::Error).await.unwrap();
+        db.set_issue_status(&resolved.id, IssueStatus::Resolved).await.unwrap();
+        let ancient = (chrono::Utc::now() - chrono::Duration::days(200)).to_rfc3339();
+        sqlx::query("UPDATE issues SET last_seen = ? WHERE id IN (?, ?)")
+            .bind(&ancient)
+            .bind(&old.id)
+            .bind(&resolved.id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        db.purge_orphan_issues(90).await.unwrap();
+
+        // Just-upserted issue (event not yet inserted) survives.
+        assert!(db.get_issue(&fresh.id).await.unwrap().is_some());
+        // Old unresolved orphan is purged.
+        assert!(db.get_issue(&old.id).await.unwrap().is_none());
+        // Resolved history is kept even without events.
+        assert!(db.get_issue(&resolved.id).await.unwrap().is_some());
     }
 
     #[tokio::test]

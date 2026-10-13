@@ -95,6 +95,19 @@ impl Store {
         self.db.upsert_issue(project_id, fingerprint, title, culprit, level).await
     }
 
+    /// Atomically upsert an issue and insert its event.
+    pub async fn record_event(
+        &self,
+        project_id: &str,
+        fingerprint: &str,
+        title: &str,
+        culprit: Option<&str>,
+        level: Level,
+        event_data: &str,
+    ) -> Result<Issue> {
+        self.db.record_event(project_id, fingerprint, title, culprit, level, event_data).await
+    }
+
     pub async fn get_issue(&self, issue_id: &str) -> Result<Option<Issue>> {
         self.db.get_issue(issue_id).await
     }

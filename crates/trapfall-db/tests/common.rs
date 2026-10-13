@@ -339,7 +339,7 @@ pub async fn retention(db: Arc<dyn Database>) {
     assert_eq!(deleted, 0);
 
     // Orphan purge (safe — issue has events)
-    db.purge_orphan_issues().await.unwrap();
+    db.purge_orphan_issues(36500).await.unwrap();
     let still_there = db.get_issue(&issue.id).await.unwrap();
     assert!(still_there.is_some());
 }
