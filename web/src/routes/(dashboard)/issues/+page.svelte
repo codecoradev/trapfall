@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { resolveProject, storeProject } from '$lib/project-selection';
 	import { api, type Issue, type Project } from '$lib/api';
 	import { getWsClient, type ServerMessage } from '$lib/ws';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -90,6 +91,7 @@
 
 	function switchProject(slug: string) {
 		selectedProject = slug;
+		storeProject(slug);
 		currentPage = 1;
 		navigate();
 	}
@@ -131,7 +133,7 @@
 			// Restore state from URL
 			const sp = page.url.searchParams;
 			const qp = sp.get('project');
-			selectedProject = (qp && projects.some(p => p.slug === qp)) ? qp : projects[0].slug;
+			selectedProject = resolveProject(projects, qp);
 			filterStatus = sp.get('status') || '';
 			filterLevel = sp.get('level') || '';
 			searchQuery = sp.get('q') || '';
