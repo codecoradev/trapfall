@@ -169,7 +169,9 @@ async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()>
     }
 
     // Per-request client pinned to the vetted addresses; redirects disabled.
+    // no_proxy: an env proxy would resolve the host itself and defeat pinning.
     let mut builder = reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5));
     if matches!(parsed_url.host(), Some(url::Host::Domain(_))) {
