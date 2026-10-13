@@ -3,60 +3,143 @@
 //! Implements JSON-RPC 2.0 over stdin/stdout for Model Context Protocol.
 //! Spawned by AI agents as subprocess. No auth needed (process isolation).
 
-use std::io::{BufRead, Write};
-
 use anyhow::Result;
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use trapfall_core::Store;
 use trapfall_proto::IssueStatus;
 
-/// Process a single JSON-RPC message and return the response string.
-/// Used by both the stdin server loop and integration tests.
-pub async fn handle_message(input: &str, store: &Store) -> String {
+/// MCP protocol versions this server can speak, newest first.
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
+// JSON-RPC 2.0 error codes.
+const PARSE_ERROR: i64 = -32700;
+const INVALID_REQUEST: i64 = -32600;
+const METHOD_NOT_FOUND: i64 = -32601;
+const INVALID_PARAMS: i64 = -32602;
+
+/// A JSON-RPC protocol-level error.
+#[derive(Debug)]
+struct RpcError {
+    code: i64,
+    message: String,
+}
+
+impl RpcError {
+    fn new(code: i64, message: impl Into<String>) -> Self {
+        Self { code, message: message.into() }
+    }
+
+    fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(INVALID_PARAMS, message)
+    }
+}
+
+fn error_response(id: Value, err: RpcError) -> Value {
+    json!({ "jsonrpc": "2.0", "error": { "code": err.code, "message": err.message }, "id": id })
+}
+
+/// Process a JSON-RPC message (single request, notification or batch).
+///
+/// Returns `None` when no response must be sent (notifications, or a batch
+/// consisting solely of notifications). Used by both the stdin server loop
+/// and integration tests.
+pub async fn handle_message(input: &str, store: &Store) -> Option<String> {
     let msg: Value = match serde_json::from_str(input.trim()) {
         Ok(v) => v,
         Err(e) => {
-            return serde_json::to_string(&json!({
-                "jsonrpc": "2.0",
-                "error": {"code": -32700, "message": format!("Parse error: {e}")},
-                "id": null
-            }))
-            .unwrap();
+            return Some(
+                error_response(Value::Null, RpcError::new(PARSE_ERROR, format!("Parse error: {e}"))).to_string(),
+            );
         }
     };
 
-    let id = msg.get("id").cloned();
-    let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-    let params = msg.get("params").cloned().unwrap_or(json!({}));
+    match msg {
+        Value::Array(items) => {
+            if items.is_empty() {
+                return Some(
+                    error_response(Value::Null, RpcError::new(INVALID_REQUEST, "Invalid Request: empty batch"))
+                        .to_string(),
+                );
+            }
+            let mut responses = Vec::new();
+            for item in items {
+                if let Some(resp) = handle_single(item, store).await {
+                    responses.push(resp);
+                }
+            }
+            if responses.is_empty() { None } else { Some(Value::Array(responses).to_string()) }
+        }
+        other => handle_single(other, store).await.map(|v| v.to_string()),
+    }
+}
+
+/// Handle one JSON-RPC message object. `None` means "send nothing".
+async fn handle_single(msg: Value, store: &Store) -> Option<Value> {
+    let Some(obj) = msg.as_object() else {
+        return Some(error_response(Value::Null, RpcError::new(INVALID_REQUEST, "Invalid Request: not an object")));
+    };
+
+    // `id` must be a string, number or null; its absence marks a notification.
+    let (id, is_notification) = match obj.get("id") {
+        None => (Value::Null, true),
+        Some(v @ (Value::String(_) | Value::Number(_) | Value::Null)) => (v.clone(), false),
+        Some(_) => {
+            return Some(error_response(
+                Value::Null,
+                RpcError::new(INVALID_REQUEST, "Invalid Request: id must be a string, number or null"),
+            ));
+        }
+    };
+
+    // A response from the peer (no method, has result/error) needs no reply.
+    if !obj.contains_key("method") && (obj.contains_key("result") || obj.contains_key("error")) {
+        return None;
+    }
+
+    if obj.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        return Some(error_response(id, RpcError::new(INVALID_REQUEST, "Invalid Request: jsonrpc must be \"2.0\"")));
+    }
+
+    let Some(method) = obj.get("method").and_then(Value::as_str) else {
+        return Some(error_response(id, RpcError::new(INVALID_REQUEST, "Invalid Request: method must be a string")));
+    };
+
+    let params = match obj.get("params") {
+        None => json!({}),
+        Some(p @ (Value::Object(_) | Value::Array(_))) => p.clone(),
+        Some(_) => {
+            return (!is_notification)
+                .then(|| error_response(id, RpcError::invalid_params("params must be an object or array")));
+        }
+    };
 
     let result = handle_request(method, params, store).await;
 
-    match result {
-        Ok(val) => json!({ "jsonrpc": "2.0", "result": val, "id": id }),
-        Err(code_msg) => json!({ "jsonrpc": "2.0", "error": {"code": -32603, "message": code_msg}, "id": id }),
+    if is_notification {
+        return None;
     }
-    .to_string()
+    Some(match result {
+        Ok(val) => json!({ "jsonrpc": "2.0", "result": val, "id": id }),
+        Err(err) => error_response(id, err),
+    })
 }
 
-/// Run the MCP server, reading JSON-RPC from stdin and writing to stdout.
+/// Run the MCP server, reading newline-delimited JSON-RPC from stdin and
+/// writing responses to stdout.
 pub async fn run_server(store: Store) -> Result<()> {
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    let mut stdout = stdout.lock();
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut stdout = tokio::io::stdout();
 
-    let mut line = String::new();
-    let stdin = stdin.lock();
-
-    for result in stdin.lines() {
-        line.clear();
-        match result {
-            Ok(l) => line.push_str(&l),
-            Err(_) => break,
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
         }
-
-        let response = handle_message(&line, &store).await;
-        writeln!(stdout, "{}", response)?;
-        stdout.flush()?;
+        if let Some(response) = handle_message(&line, &store).await {
+            stdout.write_all(response.as_bytes()).await?;
+            stdout.write_all(b"\n").await?;
+            stdout.flush().await?;
+        }
     }
 
     Ok(())
@@ -64,22 +147,45 @@ pub async fn run_server(store: Store) -> Result<()> {
 
 // ── JSON-RPC Dispatcher ────────────────────────────────────────────────
 
-async fn handle_request(method: &str, params: Value, store: &Store) -> Result<Value, String> {
+async fn handle_request(method: &str, params: Value, store: &Store) -> Result<Value, RpcError> {
     match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "trapfall", "version": env!("CARGO_PKG_VERSION") }
-        })),
-        "notifications/initialized" => Ok(Value::Null),
+        "initialize" => {
+            let requested = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing protocolVersion"))?;
+            let version = SUPPORTED_PROTOCOL_VERSIONS
+                .iter()
+                .find(|v| **v == requested)
+                .unwrap_or(&SUPPORTED_PROTOCOL_VERSIONS[0]);
+            Ok(json!({
+                "protocolVersion": version,
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "trapfall", "version": env!("CARGO_PKG_VERSION") }
+            }))
+        }
         "tools/list" => Ok(json!({ "tools": tools_list() })),
         "tools/call" => {
-            let tool_name = params.get("name").and_then(|n| n.as_str()).ok_or("missing tool name")?;
-            let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            call_tool(tool_name, args, store).await
+            let tool_name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing tool name"))?;
+            let args = match params.get("arguments") {
+                None | Some(Value::Null) => json!({}),
+                Some(a @ Value::Object(_)) => a.clone(),
+                Some(_) => return Err(RpcError::invalid_params("arguments must be an object")),
+            };
+            if !tools_list().iter().any(|t| t["name"] == tool_name) {
+                return Err(RpcError::invalid_params(format!("Unknown tool: {tool_name}")));
+            }
+            // Tool execution failures are reported in-band (`isError`), not as protocol errors.
+            Ok(match call_tool(tool_name, args, store).await {
+                Ok(v) => v,
+                Err(msg) => json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+            })
         }
         "ping" => Ok(json!({})),
-        _ => Err(format!("Unknown method: {method}")),
+        _ => Err(RpcError::new(METHOD_NOT_FOUND, format!("Unknown method: {method}"))),
     }
 }
 
@@ -399,7 +505,7 @@ async fn tool_rotate_dsn(args: Value, store: &Store) -> Result<Value, String> {
     let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
     let project = resolve_slug(slug, store).await?;
     let new_key = store.rotate_dsn(&project.id).await.map_err(|e| e.to_string())?;
-    Ok(text_msg(format!("DSN rotated for {}. New key: {}...{}", slug, &new_key[..8], &new_key[new_key.len() - 4..])))
+    Ok(text_msg(format!("DSN rotated for {}. New key: {}", slug, abbreviate_key(&new_key))))
 }
 
 async fn tool_healthcheck(store: &Store) -> Result<Value, String> {
@@ -415,10 +521,45 @@ fn mask_dsn(dsn: &str) -> String {
         Some(p) => p,
         None => return "***masked***".to_string(),
     };
-    let key = &dsn[..at_pos].trim_start_matches("https://");
-    if key.len() <= 12 {
-        format!("https://***@{}", &dsn[at_pos + 1..])
+    let key = dsn[..at_pos].trim_start_matches("https://");
+    let host = &dsn[at_pos + 1..];
+    if key.chars().count() <= 12 {
+        format!("https://***@{host}")
     } else {
-        format!("https://{}...{}@{}", &key[..8], &key[key.len() - 4..], &dsn[at_pos + 1..])
+        format!("https://{}@{host}", abbreviate_key(key))
+    }
+}
+
+/// Abbreviate a key to its first 8 and last 4 characters (char-boundary safe).
+/// Keys too short to abbreviate meaningfully are fully masked.
+fn abbreviate_key(key: &str) -> String {
+    let count = key.chars().count();
+    if count <= 12 {
+        return "***".to_string();
+    }
+    let head: String = key.chars().take(8).collect();
+    let tail: String = key.chars().skip(count - 4).collect();
+    format!("{head}...{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn abbreviate_key_handles_short_and_multibyte() {
+        assert_eq!(abbreviate_key(""), "***");
+        assert_eq!(abbreviate_key("abc"), "***");
+        assert_eq!(abbreviate_key("0123456789abcdef"), "01234567...cdef");
+        // Multibyte chars must not panic on slicing.
+        assert_eq!(abbreviate_key("ééééééééééééééé"), "éééééééé...éééé");
+    }
+
+    #[test]
+    fn mask_dsn_handles_edge_cases() {
+        assert_eq!(mask_dsn("no-at-sign"), "***masked***");
+        assert_eq!(mask_dsn("https://short@host/1"), "https://***@host/1");
+        assert_eq!(mask_dsn("https://0123456789abcdef@host/1"), "https://01234567...cdef@host/1");
+        assert_eq!(mask_dsn("https://éééééééééééééééé@host/1"), "https://éééééééé...éééé@host/1");
     }
 }
