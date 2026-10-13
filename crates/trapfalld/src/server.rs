@@ -699,6 +699,14 @@ async fn create_alert_rule(
     let action_config = req.action_config.unwrap_or(serde_json::json!({}));
     let cooldown = req.cooldown_seconds.unwrap_or(300);
 
+    if action_type == "webhook" {
+        let url = action_config.get("url").and_then(|v| v.as_str()).unwrap_or_default();
+        if let Err(e) = crate::alert::validate_webhook_url(url) {
+            tracing::warn!("Rejected alert rule with invalid webhook URL: {e}");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+
     let rule = store
         .create_alert_rule(
             &project.id,
