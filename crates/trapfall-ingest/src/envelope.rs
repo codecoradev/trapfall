@@ -10,6 +10,28 @@ use flate2::read::GzDecoder;
 use std::io::Read;
 use trapfall_proto::{Attachment, Event, ParsedEnvelope, SessionAggregates, SessionUpdate, Transaction};
 
+// ── Limits ────────────────────────────────────────────────────────────────
+
+/// Resource limits applied while decoding an envelope.
+///
+/// `max_ingest_body_bytes` only bounds the *compressed* request body, so these
+/// bound what a compressed payload may expand to and what it may contain.
+#[derive(Debug, Clone)]
+pub struct EnvelopeLimits {
+    /// Maximum size of the decompressed envelope.
+    pub max_decompressed_bytes: usize,
+    /// Maximum number of attachment items per envelope.
+    pub max_attachments: usize,
+    /// Maximum size of a single attachment.
+    pub max_attachment_bytes: usize,
+}
+
+impl Default for EnvelopeLimits {
+    fn default() -> Self {
+        Self { max_decompressed_bytes: 32 * 1024 * 1024, max_attachments: 16, max_attachment_bytes: 20 * 1024 * 1024 }
+    }
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 /// Parsed item header from a single envelope line.
@@ -57,7 +79,7 @@ fn parse_item_header(line: &[u8]) -> ItemHeader {
 /// payloads are not corrupted by newline splitting. Text items (event,
 /// transaction, session, sessions) are still parsed as UTF-8 JSON after
 /// newline-delimited extraction.
-fn parse_envelope_binary(data: &[u8]) -> Result<ParsedEnvelope> {
+fn parse_envelope_binary(data: &[u8], limits: &EnvelopeLimits) -> Result<ParsedEnvelope> {
     let mut result = ParsedEnvelope::default();
     let mut pos = 0;
 
@@ -92,17 +114,25 @@ fn parse_envelope_binary(data: &[u8]) -> Result<ParsedEnvelope> {
             // ── Binary attachment ──
             let length = hdr.length.context("attachment item missing required 'length' field")?;
 
-            // Check we have enough data.
-            if pos + length > data.len() {
-                anyhow::bail!(
+            if length > limits.max_attachment_bytes {
+                anyhow::bail!("attachment of {length} bytes exceeds limit of {} bytes", limits.max_attachment_bytes);
+            }
+            if result.attachments.len() >= limits.max_attachments {
+                anyhow::bail!("too many attachments (limit {})", limits.max_attachments);
+            }
+
+            // Overflow-safe bounds check.
+            let end = match pos.checked_add(length) {
+                Some(end) if end <= data.len() => end,
+                _ => anyhow::bail!(
                     "truncated attachment: declared {} bytes but only {} remaining",
                     length,
                     data.len() - pos
-                );
-            }
+                ),
+            };
 
-            let attachment_data = data[pos..pos + length].to_vec();
-            pos += length;
+            let attachment_data = data[pos..end].to_vec();
+            pos = end;
 
             // Skip one trailing \n if present (envelope items are \n-terminated).
             if pos < data.len() && data[pos] == b'\n' {
@@ -117,25 +147,27 @@ fn parse_envelope_binary(data: &[u8]) -> Result<ParsedEnvelope> {
             });
         } else {
             // ── Text item (event, transaction, session, sessions) ──
-            // Find the next \n to delimit the body.
-            let body_end = match find_newline(data, pos) {
-                Some(end) => end,
-                None => {
-                    // Last item with no trailing newline — use remaining bytes.
-                    data.len()
+            // Honour a declared length when it fits inside the data (the body
+            // may legally contain newlines); (it must end at a newline or EOF, which
+            // tolerates SDKs that miscount); otherwise delimit by newline.
+            let declared_end = hdr
+                .length
+                .and_then(|len| pos.checked_add(len))
+                .filter(|&end| end == data.len() || data.get(end) == Some(&b'\n'));
+            let (body_end, next_pos) = match declared_end {
+                Some(end) => {
+                    // Skip one trailing \n if present.
+                    let next = if data.get(end) == Some(&b'\n') { end + 1 } else { end };
+                    (end, next)
                 }
+                None => match find_newline(data, pos) {
+                    Some(end) => (end, end + 1),
+                    // Last item with no trailing newline — use remaining bytes.
+                    None => (data.len(), data.len()),
+                },
             };
             let body_bytes = &data[pos..body_end];
-            pos = if body_end < data.len() { body_end + 1 } else { body_end };
-
-            // If length is declared, honour it and advance past any extra
-            // bytes the newline scan would have missed.
-            if let Some(length) = hdr.length {
-                let declared_end = (body_end + 1).saturating_sub(body_bytes.len()) + length;
-                if declared_end <= data.len() {
-                    pos = declared_end;
-                }
-            }
+            pos = next_pos;
 
             let body_text = match std::str::from_utf8(body_bytes) {
                 Ok(t) => t,
@@ -178,26 +210,44 @@ fn parse_envelope_binary(data: &[u8]) -> Result<ParsedEnvelope> {
 ///
 /// Also supports gzip- and deflate-wrapped envelopes.
 pub fn parse_envelope(body: &[u8], content_encoding: Option<&str>) -> Result<ParsedEnvelope> {
-    let decompressed = match content_encoding {
-        Some("gzip") | Some("application/gzip") => decompress_gzip(body)?,
-        Some("deflate") => decompress_deflate(body)?,
-        _ => body.to_vec(),
+    parse_envelope_with_limits(body, content_encoding, &EnvelopeLimits::default())
+}
+
+/// Like [`parse_envelope`] but with explicit [`EnvelopeLimits`].
+pub fn parse_envelope_with_limits(
+    body: &[u8],
+    content_encoding: Option<&str>,
+    limits: &EnvelopeLimits,
+) -> Result<ParsedEnvelope> {
+    let encoding = content_encoding.map(|e| e.trim().to_ascii_lowercase());
+    let decompressed = match encoding.as_deref() {
+        Some("gzip") | Some("x-gzip") | Some("application/gzip") => {
+            read_capped(GzDecoder::new(body), limits.max_decompressed_bytes, "gzip")?
+        }
+        Some("deflate") => {
+            read_capped(flate2::read::DeflateDecoder::new(body), limits.max_decompressed_bytes, "deflate")?
+        }
+        _ => {
+            if body.len() > limits.max_decompressed_bytes {
+                anyhow::bail!("envelope exceeds limit of {} bytes", limits.max_decompressed_bytes);
+            }
+            body.to_vec()
+        }
     };
 
     // Use binary parser for all envelopes (handles both text and binary items).
-    parse_envelope_binary(&decompressed)
+    parse_envelope_binary(&decompressed, limits)
 }
 
-fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = GzDecoder::new(data);
-    let mut buf = Vec::with_capacity(data.len() * 2);
-    decoder.read_to_end(&mut buf).context("gzip decompression failed")?;
-    Ok(buf)
-}
-
-fn decompress_deflate(data: &[u8]) -> Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(data.len() * 2);
-    flate2::read::DeflateDecoder::new(data).read_to_end(&mut buf).context("deflate decompression failed")?;
+/// Read a decoder to the end, failing if output would exceed `max` bytes.
+fn read_capped<R: Read>(decoder: R, max: usize, kind: &str) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    // `take(max + 1)` lets us distinguish "exactly max" from "over max".
+    let cap = (max as u64).saturating_add(1);
+    decoder.take(cap).read_to_end(&mut buf).with_context(|| format!("{kind} decompression failed"))?;
+    if buf.len() > max {
+        anyhow::bail!("decompressed {kind} envelope exceeds limit of {max} bytes");
+    }
     Ok(buf)
 }
 
@@ -538,7 +588,7 @@ mod tests {
             b"\n",
         ]);
 
-        let result = parse_envelope_binary(&envelope).unwrap();
+        let result = parse_envelope_binary(&envelope, &EnvelopeLimits::default()).unwrap();
         assert_eq!(result.events.len(), 1, "should have 1 event");
         assert_eq!(result.attachments.len(), 1, "should have 1 attachment");
         assert_eq!(result.events[0].event_id, "e1");
@@ -561,7 +611,7 @@ mod tests {
             b"\n",
         ]);
 
-        let result = parse_envelope_binary(&envelope).unwrap();
+        let result = parse_envelope_binary(&envelope, &EnvelopeLimits::default()).unwrap();
         assert_eq!(result.attachments.len(), 1);
         assert_eq!(result.attachments[0].data, attachment_data);
         // The key assertion: the data contains embedded newlines and null bytes
@@ -588,7 +638,7 @@ mod tests {
             b"\n",
         ]);
 
-        let result = parse_envelope_binary(&envelope).unwrap();
+        let result = parse_envelope_binary(&envelope, &EnvelopeLimits::default()).unwrap();
         assert!(result.events.is_empty(), "should have no events");
         assert_eq!(result.attachments.len(), 1);
         assert_eq!(result.attachments[0].data, attachment_data);
@@ -606,7 +656,7 @@ mod tests {
 {"event_id":"e2","level":"info","transaction":"POST /api/submit","start_timestamp":1.0,"timestamp":2.0}"#;
 
         let result_text = parse_envelope_text(std::str::from_utf8(envelope).unwrap()).unwrap();
-        let result_binary = parse_envelope_binary(envelope).unwrap();
+        let result_binary = parse_envelope_binary(envelope, &EnvelopeLimits::default()).unwrap();
 
         // Events should match
         assert_eq!(result_binary.events.len(), result_text.events.len());
@@ -636,7 +686,7 @@ mod tests {
             short_data,
         ]);
 
-        let result = parse_envelope_binary(&envelope);
+        let result = parse_envelope_binary(&envelope, &EnvelopeLimits::default());
         assert!(result.is_err(), "truncated attachment should return error");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("truncated attachment"), "error should mention truncated attachment, got: {err}");
@@ -667,7 +717,7 @@ mod tests {
             b"\n",
         ]);
 
-        let result = parse_envelope_binary(&envelope).unwrap();
+        let result = parse_envelope_binary(&envelope, &EnvelopeLimits::default()).unwrap();
         assert_eq!(result.attachments.len(), 2, "should have 2 attachments");
         assert_eq!(result.attachments[0].data, att1_data);
         assert_eq!(result.attachments[0].filename, "a1.txt");
@@ -723,5 +773,91 @@ mod tests {
         assert_eq!(result.events.len(), 1);
         assert_eq!(result.events[0].message.as_deref(), Some("via entry point"));
         assert!(result.attachments.is_empty());
+    }
+
+    // ── Hardening tests (#330) ──
+
+    fn gzip_bytes(data: &[u8]) -> Vec<u8> {
+        use flate2::{Compression, write::GzEncoder};
+        use std::io::Write;
+        let mut enc = GzEncoder::new(Vec::new(), Compression::best());
+        enc.write_all(data).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn gzip_bomb_is_rejected() {
+        // ~16 MiB of zeros compresses to a few KiB; cap at 1 MiB.
+        let bomb = gzip_bytes(&vec![0u8; 16 * 1024 * 1024]);
+        assert!(bomb.len() < 64 * 1024);
+        let limits = EnvelopeLimits { max_decompressed_bytes: 1024 * 1024, ..EnvelopeLimits::default() };
+        let err = parse_envelope_with_limits(&bomb, Some("gzip"), &limits).unwrap_err().to_string();
+        assert!(err.contains("exceeds"), "got: {err}");
+    }
+
+    #[test]
+    fn deflate_bomb_is_rejected() {
+        use flate2::{Compression, write::DeflateEncoder};
+        use std::io::Write;
+        let mut enc = DeflateEncoder::new(Vec::new(), Compression::best());
+        enc.write_all(&vec![0u8; 8 * 1024 * 1024]).unwrap();
+        let bomb = enc.finish().unwrap();
+        let limits = EnvelopeLimits { max_decompressed_bytes: 1024 * 1024, ..EnvelopeLimits::default() };
+        assert!(parse_envelope_with_limits(&bomb, Some("deflate"), &limits).is_err());
+    }
+
+    #[test]
+    fn legit_gzip_under_limit_still_parses() {
+        let raw = b"{\"event_id\":\"e1\"}\n{\"type\":\"event\"}\n{\"event_id\":\"e1\",\"message\":\"hi\"}\n";
+        let gz = gzip_bytes(raw);
+        let r = parse_envelope(&gz, Some("gzip")).unwrap();
+        assert_eq!(r.events.len(), 1);
+    }
+
+    #[test]
+    fn content_encoding_is_case_insensitive() {
+        let raw = b"{\"event_id\":\"e1\"}\n{\"type\":\"event\"}\n{\"event_id\":\"e1\",\"message\":\"hi\"}\n";
+        let gz = gzip_bytes(raw);
+        for enc in ["GZIP", "Gzip", " gzip ", "x-gzip"] {
+            let r = parse_envelope(&gz, Some(enc)).unwrap_or_else(|e| panic!("{enc}: {e}"));
+            assert_eq!(r.events.len(), 1, "{enc}");
+        }
+    }
+
+    #[test]
+    fn huge_declared_length_does_not_overflow() {
+        let env = format!("{{\"event_id\":\"e1\"}}\n{{\"type\":\"attachment\",\"length\":{}}}\nabc", u64::MAX);
+        let r = parse_envelope_binary(env.as_bytes(), &EnvelopeLimits::default());
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn attachment_count_is_capped() {
+        let mut env = b"{\"event_id\":\"e1\"}\n".to_vec();
+        for _ in 0..5 {
+            env.extend_from_slice(b"{\"type\":\"attachment\",\"length\":1}\nx\n");
+        }
+        let limits = EnvelopeLimits { max_attachments: 3, ..EnvelopeLimits::default() };
+        assert!(parse_envelope_binary(&env, &limits).is_err());
+    }
+
+    #[test]
+    fn attachment_size_is_capped() {
+        let mut env = b"{\"event_id\":\"e1\"}\n{\"type\":\"attachment\",\"length\":10}\n".to_vec();
+        env.extend_from_slice(&[b'x'; 10]);
+        let limits = EnvelopeLimits { max_attachment_bytes: 5, ..EnvelopeLimits::default() };
+        assert!(parse_envelope_binary(&env, &limits).is_err());
+    }
+
+    #[test]
+    fn text_item_honours_declared_length() {
+        // Declared length spans an embedded newline (valid JSON whitespace).
+        let body = b"{\"event_id\":\"e1\",\n\"message\":\"a\"}";
+        let mut env = b"{\"event_id\":\"e1\"}\n".to_vec();
+        env.extend_from_slice(format!("{{\"type\":\"event\",\"length\":{}}}\n", body.len()).as_bytes());
+        env.extend_from_slice(body);
+        env.extend_from_slice(b"\n{\"type\":\"event\"}\n{\"event_id\":\"e2\",\"message\":\"b\"}\n");
+        let r = parse_envelope_binary(&env, &EnvelopeLimits::default()).unwrap();
+        assert_eq!(r.events.len(), 2);
     }
 }
