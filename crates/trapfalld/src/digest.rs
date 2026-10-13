@@ -45,24 +45,30 @@ impl DigestTask {
 
         loop {
             tokio::select! {
-                Some(event) = self.rx.recv() => {
-                    tracing::debug!("Digest received event: project={}", event.project_id);
-                    buffer.push(event);
-                    if buffer.len() >= FLUSH_THRESHOLD {
-                        Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
+                maybe_event = self.rx.recv() => {
+                    match maybe_event {
+                        Some(event) => {
+                            tracing::debug!("Digest received event: project={}", event.project_id);
+                            buffer.push(event);
+                            if buffer.len() >= FLUSH_THRESHOLD {
+                                Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
+                            }
+                        }
+                        None => {
+                            // All senders dropped and the queue is fully drained —
+                            // flush the partial batch and stop.
+                            tracing::info!("Digest channel closed, flushing {} buffered events", buffer.len());
+                            if !buffer.is_empty() {
+                                Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
+                            }
+                            break;
+                        }
                     }
                 }
                 _ = interval.tick() => {
                     if !buffer.is_empty() {
                         Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
                     }
-                }
-                else => {
-                    // Channel closed — drain remaining
-                    if !buffer.is_empty() {
-                        Self::flush(&store, &mut buffer, &self.ws_tx, &self.alert_tx).await;
-                    }
-                    break;
                 }
             }
         }
@@ -126,12 +132,11 @@ impl DigestTask {
 
         let level = ev.event.level;
 
-        // Upsert issue (creates or increments count)
-        let issue = store.upsert_issue(&ev.project_id, &ev.fingerprint.hash, &title, culprit.as_deref(), level).await?;
-
-        // Store raw event JSON
+        // Upsert issue and store raw event JSON atomically (one transaction)
         let event_json = serde_json::to_string(&ev.event).unwrap_or_default();
-        let _event_id = store.insert_event(&issue.id, &ev.project_id, &event_json).await?;
+        let issue = store
+            .record_event(&ev.project_id, &ev.fingerprint.hash, &title, culprit.as_deref(), level, &event_json)
+            .await?;
 
         Ok(issue)
     }
@@ -266,5 +271,84 @@ mod tests {
             received_at: "2026-01-01T00:00:00Z".into(),
         };
         assert_eq!(derive_title(&ev), "Unknown Error");
+    }
+
+    fn make_event(project_id: &str, n: usize) -> IngestEvent {
+        use trapfall_proto::*;
+        IngestEvent {
+            project_id: project_id.into(),
+            fingerprint: Fingerprint::new("drain-hash".into(), vec![]),
+            event: Event {
+                event_id: format!("e{n}"),
+                level: Level::Error,
+                platform: None,
+                release: None,
+                environment: None,
+                server_name: None,
+                breadcrumbs: Breadcrumbs::default(),
+                exception: None,
+                message: Some("drain test".into()),
+                tags: serde_json::Value::Null,
+                extra: serde_json::Value::Null,
+                contexts: serde_json::Value::Null,
+                timestamp: None,
+            },
+            received_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    async fn test_store() -> Store {
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        Store::new(backend)
+    }
+
+    /// Events queued (fewer than the flush threshold) when the channel closes
+    /// must all be persisted and the task must exit on its own.
+    #[tokio::test]
+    async fn drains_partial_batch_and_exits_on_channel_close() {
+        let store = test_store().await;
+        let project = store.create_project("drain", "Drain").await.unwrap();
+        let (tx, rx) = mpsc::channel(256);
+        let handle = tokio::spawn(DigestTask::new(store.clone(), rx).run());
+
+        let n = 7;
+        for i in 0..n {
+            tx.send(make_event(&project.id, i)).await.unwrap();
+        }
+        drop(tx);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+            .await
+            .expect("digest task must exit after channel close")
+            .unwrap()
+            .unwrap();
+
+        let issues = store.list_issues(&project.id, 10, 0).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(store.count_events(&issues[0].id).await.unwrap(), n as i64);
+    }
+
+    /// More events than the flush threshold, plus a remainder, all persisted.
+    #[tokio::test]
+    async fn drains_multiple_batches_on_channel_close() {
+        let store = test_store().await;
+        let project = store.create_project("drain2", "Drain2").await.unwrap();
+        let (tx, rx) = mpsc::channel(256);
+        let n = FLUSH_THRESHOLD * 2 + 3;
+        for i in 0..n {
+            tx.send(make_event(&project.id, i)).await.unwrap();
+        }
+        drop(tx);
+
+        let handle = tokio::spawn(DigestTask::new(store.clone(), rx).run());
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("digest task must exit after channel close")
+            .unwrap()
+            .unwrap();
+
+        let issues = store.list_issues(&project.id, 10, 0).await.unwrap();
+        assert_eq!(store.count_events(&issues[0].id).await.unwrap(), n as i64);
     }
 }

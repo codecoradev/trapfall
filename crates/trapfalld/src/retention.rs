@@ -26,7 +26,7 @@ pub async fn run_retention(store: &Store, retention_days: Option<i64>) {
 async fn purge_old_events(store: &Store, days: i64) -> anyhow::Result<()> {
     let db = store.backend();
     let deleted = db.purge_old_events(days).await?;
-    db.purge_orphan_issues().await?;
+    db.purge_orphan_issues(days).await?;
     db.purge_stale_auth_attempts().await?;
 
     if deleted > 0 {

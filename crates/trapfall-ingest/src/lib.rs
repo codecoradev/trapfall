@@ -4,5 +4,5 @@
 
 pub mod envelope;
 
-pub use envelope::{extract_sentry_key, parse_envelope};
+pub use envelope::{EnvelopeLimits, extract_sentry_key, parse_envelope, parse_envelope_with_limits};
 pub use trapfall_proto::ParsedEnvelope;
