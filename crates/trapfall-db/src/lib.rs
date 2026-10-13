@@ -244,6 +244,17 @@ pub trait Database: Send + Sync {
     // ── Events ──────────────────────────────────────────────────────────
 
     async fn insert_event(&self, issue_id: &str, project_id: &str, event_data: &str) -> Result<String>;
+    /// Upsert the issue and insert its event in ONE transaction, so an event
+    /// failure never leaves a bumped issue count without an event row.
+    async fn record_event(
+        &self,
+        project_id: &str,
+        fingerprint: &str,
+        title: &str,
+        culprit: Option<&str>,
+        level: Level,
+        event_data: &str,
+    ) -> Result<Issue>;
     async fn list_events(&self, issue_id: &str, limit: i64, offset: i64) -> Result<Vec<StoredEvent>>;
     async fn count_events(&self, issue_id: &str) -> Result<i64>;
 
@@ -337,8 +348,10 @@ pub trait Database: Send + Sync {
 
     /// Delete events older than `days` days. Returns count of deleted rows.
     async fn purge_old_events(&self, days: i64) -> Result<u64>;
-    /// Delete orphaned issues (no remaining events). Best-effort.
-    async fn purge_orphan_issues(&self) -> Result<()>;
+    /// Delete orphaned issues: no remaining events, not resolved/ignored, and
+    /// `last_seen` older than `days` days (so a freshly upserted issue whose
+    /// event is not yet inserted is never removed). Best-effort.
+    async fn purge_orphan_issues(&self, days: i64) -> Result<()>;
     /// Delete auth attempts older than 30 days. Best-effort.
     async fn purge_stale_auth_attempts(&self) -> Result<()>;
 

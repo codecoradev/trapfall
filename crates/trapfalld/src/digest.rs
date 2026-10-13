@@ -126,12 +126,11 @@ impl DigestTask {
 
         let level = ev.event.level;
 
-        // Upsert issue (creates or increments count)
-        let issue = store.upsert_issue(&ev.project_id, &ev.fingerprint.hash, &title, culprit.as_deref(), level).await?;
-
-        // Store raw event JSON
+        // Upsert issue and store raw event JSON atomically (one transaction)
         let event_json = serde_json::to_string(&ev.event).unwrap_or_default();
-        let _event_id = store.insert_event(&issue.id, &ev.project_id, &event_json).await?;
+        let issue = store
+            .record_event(&ev.project_id, &ev.fingerprint.hash, &title, culprit.as_deref(), level, &event_json)
+            .await?;
 
         Ok(issue)
     }

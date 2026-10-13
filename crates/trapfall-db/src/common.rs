@@ -246,6 +246,12 @@ pub fn extract_dsn_host(dsn: &str) -> String {
         .to_string()
 }
 
+/// RFC3339 cutoff `days` days before now. Same format as stored timestamps
+/// (`now_rfc3339`), so text comparison is consistent on both backends.
+pub fn cutoff_rfc3339_days(days: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339()
+}
+
 /// Current time as RFC3339 string.
 pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()

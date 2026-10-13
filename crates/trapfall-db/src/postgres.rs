@@ -201,29 +201,25 @@ impl Database for PostgresBackend {
         culprit: Option<&str>,
         level: Level,
     ) -> Result<Issue> {
-        let level_str = level_to_str(level);
-        let id = new_id();
-        let now = now_rfc3339();
+        let mut conn = self.pool.acquire().await?;
+        upsert_issue_conn(&mut conn, project_id, fingerprint, title, culprit, level).await
+    }
 
-        // INSERT ... ON CONFLICT DO UPDATE — returns the row in both cases.
-        let row = sqlx::query_as::<_, IssueRow>(
-            "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) \
-             VALUES ($1, $2, $3, $4, $5, 'unresolved', $6, 1, 0, $7, $7) \
-             ON CONFLICT (project_id, fingerprint) DO UPDATE SET \
-                 count = issues.count + 1, last_seen = $7, level = $6 \
-             RETURNING id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen",
-        )
-        .bind(&id)
-        .bind(project_id)
-        .bind(fingerprint)
-        .bind(title)
-        .bind(culprit)
-        .bind(&level_str)
-        .bind(&now)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(row.into())
+    async fn record_event(
+        &self,
+        project_id: &str,
+        fingerprint: &str,
+        title: &str,
+        culprit: Option<&str>,
+        level: Level,
+        event_data: &str,
+    ) -> Result<Issue> {
+        // One transaction: if the event insert fails the issue bump rolls back.
+        let mut tx = self.pool.begin().await?;
+        let issue = upsert_issue_conn(&mut tx, project_id, fingerprint, title, culprit, level).await?;
+        insert_event_conn(&mut tx, &issue.id, project_id, event_data).await?;
+        tx.commit().await?;
+        Ok(issue)
     }
 
     async fn get_issue(&self, issue_id: &str) -> Result<Option<Issue>> {
@@ -321,17 +317,8 @@ impl Database for PostgresBackend {
     // ── Events ─────────────────────────────────────────────────────────
 
     async fn insert_event(&self, issue_id: &str, project_id: &str, event_data: &str) -> Result<String> {
-        let id = new_id();
-        let now = now_rfc3339();
-        sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES ($1, $2, $3, $4, $5)")
-            .bind(&id)
-            .bind(issue_id)
-            .bind(project_id)
-            .bind(event_data)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
-        Ok(id)
+        let mut conn = self.pool.acquire().await?;
+        insert_event_conn(&mut conn, issue_id, project_id, event_data).await
     }
 
     async fn list_events(&self, issue_id: &str, limit: i64, offset: i64) -> Result<Vec<StoredEvent>> {
@@ -843,20 +830,27 @@ impl Database for PostgresBackend {
     // ── Retention ──────────────────────────────────────────────────────
 
     async fn purge_old_events(&self, days: i64) -> Result<u64> {
-        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let cutoff = cutoff_rfc3339_days(days);
         let result = sqlx::query("DELETE FROM events WHERE received_at < $1").bind(&cutoff).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
-    async fn purge_orphan_issues(&self) -> Result<()> {
-        sqlx::query("DELETE FROM issues WHERE id NOT IN (SELECT DISTINCT issue_id FROM events)")
-            .execute(&self.pool)
-            .await?;
+    async fn purge_orphan_issues(&self, days: i64) -> Result<()> {
+        // Single atomic statement. `last_seen < cutoff` protects a freshly
+        // upserted issue whose event is not yet inserted; resolved and ignored
+        // issues are kept as history.
+        sqlx::query(
+            "DELETE FROM issues WHERE last_seen < $1 AND status NOT IN ('resolved', 'ignored') \
+             AND NOT EXISTS (SELECT 1 FROM events WHERE events.issue_id = issues.id)",
+        )
+        .bind(cutoff_rfc3339_days(days))
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     async fn purge_stale_auth_attempts(&self) -> Result<()> {
-        let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let cutoff = cutoff_rfc3339_days(30);
         sqlx::query("DELETE FROM auth_attempts WHERE created_at < $1").bind(&cutoff).execute(&self.pool).await?;
         Ok(())
     }
@@ -1071,4 +1065,58 @@ impl Database for PostgresBackend {
         .await?;
         Ok(row.map(Into::into))
     }
+}
+
+/// Atomic issue upsert on an existing connection/transaction.
+async fn upsert_issue_conn(
+    conn: &mut sqlx::PgConnection,
+    project_id: &str,
+    fingerprint: &str,
+    title: &str,
+    culprit: Option<&str>,
+    level: Level,
+) -> Result<Issue> {
+    let level_str = level_to_str(level);
+    let id = new_id();
+    let now = now_rfc3339();
+
+    // INSERT ... ON CONFLICT DO UPDATE returns the row in both cases.
+    let row = sqlx::query_as::<_, IssueRow>(
+        "INSERT INTO issues (id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen) \
+         VALUES ($1, $2, $3, $4, $5, 'unresolved', $6, 1, 0, $7, $7) \
+         ON CONFLICT (project_id, fingerprint) DO UPDATE SET \
+             count = issues.count + 1, last_seen = $7, level = $6 \
+         RETURNING id, project_id, fingerprint, title, culprit, status, level, count, user_count, first_seen, last_seen",
+    )
+    .bind(&id)
+    .bind(project_id)
+    .bind(fingerprint)
+    .bind(title)
+    .bind(culprit)
+    .bind(&level_str)
+    .bind(&now)
+    .fetch_one(&mut *conn)
+    .await?;
+
+    Ok(row.into())
+}
+
+/// Insert an event row on an existing connection/transaction.
+async fn insert_event_conn(
+    conn: &mut sqlx::PgConnection,
+    issue_id: &str,
+    project_id: &str,
+    event_data: &str,
+) -> Result<String> {
+    let id = new_id();
+    let now = now_rfc3339();
+    sqlx::query("INSERT INTO events (id, issue_id, project_id, data, received_at) VALUES ($1, $2, $3, $4, $5)")
+        .bind(&id)
+        .bind(issue_id)
+        .bind(project_id)
+        .bind(event_data)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await?;
+    Ok(id)
 }
