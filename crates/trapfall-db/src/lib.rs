@@ -366,6 +366,16 @@ pub trait Database: Send + Sync {
     async fn record_auth_attempt(&self, email: &str, ip: &str, success: bool) -> Result<()>;
     async fn count_failed_attempts_email(&self, email: &str, minutes: i64) -> Result<i64>;
     async fn count_failed_attempts_ip(&self, ip: &str, minutes: i64) -> Result<i64>;
+    /// Failed attempts for one (email, ip) pair in the last `minutes`.
+    async fn count_failed_attempts_email_ip(&self, email: &str, ip: &str, minutes: i64) -> Result<i64>;
+    /// Atomically create the first admin. Returns `false` (and inserts
+    /// nothing) when any user already exists.
+    async fn create_first_user(&self, email: &str, name: &str, password_hash: &str) -> Result<bool>;
+    /// Delete every session of `user_id` except the one stored under `keep_token`.
+    async fn delete_user_sessions_except(&self, user_id: &str, keep_token: &str) -> Result<u64>;
+    /// Delete sessions whose token does not start with `prefix` (legacy plaintext
+    /// tokens). `prefix` must not contain SQL LIKE wildcards (`%`, `_`).
+    async fn purge_sessions_without_prefix(&self, prefix: &str) -> Result<u64>;
 
     // ── Attachments ──────────────────────────────────────────────────
 

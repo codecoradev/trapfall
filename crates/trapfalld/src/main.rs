@@ -201,6 +201,13 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
         config.timezone,
     );
 
+    // One-time upgrade: sessions are now stored hashed; drop legacy plaintext rows.
+    match store.purge_legacy_sessions().await {
+        Ok(0) => {}
+        Ok(n) => info!("Purged {n} legacy plaintext session(s); affected users must log in again"),
+        Err(e) => tracing::warn!("Legacy session purge failed: {e}"),
+    }
+
     // Channel: ingest → digest
     let (ingest_tx, ingest_rx) = mpsc::channel::<trapfall_proto::IngestEvent>(1024);
 
@@ -248,7 +255,11 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
     // HTTP server
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     info!("Listening on {listen}");
-    axum::serve(listener, trapfalld::server::router(state)).await?;
+    axum::serve(
+        listener,
+        trapfalld::server::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     digest_handle.abort();
     retention_handle.abort();

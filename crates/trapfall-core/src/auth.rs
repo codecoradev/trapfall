@@ -26,6 +26,13 @@ fn hash_params() -> &'static Params {
     PARAMS.get_or_init(|| Params::new(19456, 2, 1, None).unwrap_or_default())
 }
 
+/// A valid Argon2 hash of a random value, used to equalise timing for unknown users.
+fn dummy_hash() -> &'static str {
+    use std::sync::OnceLock;
+    static HASH: OnceLock<String> = OnceLock::new();
+    HASH.get_or_init(|| hash_password(&Uuid::new_v4().to_string()).unwrap_or_default())
+}
+
 /// Session duration in days.
 const SESSION_DURATION_DAYS: i64 = 7;
 
@@ -83,6 +90,37 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
     argon2.verify_password(password.as_bytes(), &parsed).is_ok()
 }
 
+/// Hash a password on the blocking pool so Argon2 (tens of ms, 19 MiB) never
+/// stalls the single-threaded async runtime.
+pub async fn hash_password_async(password: &str) -> Result<String> {
+    let password = password.to_string();
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|e| anyhow::anyhow!("hash task failed: {e}"))?
+}
+
+/// Verify a password on the blocking pool (see [`hash_password_async`]).
+pub async fn verify_password_async(password: &str, hash: &str) -> bool {
+    let (password, hash) = (password.to_string(), hash.to_string());
+    tokio::task::spawn_blocking(move || verify_password(&password, &hash)).await.unwrap_or(false)
+}
+
+/// Prefix marking a stored (hashed) session token. Rows without it are legacy
+/// plaintext tokens and are purged at startup.
+pub const SESSION_TOKEN_PREFIX: &str = "h1:";
+
+/// Per-(email, IP) failed-login threshold within [`LOCKOUT_WINDOW_MINUTES`].
+const MAX_FAILS_PER_EMAIL_IP: i64 = 5;
+/// Per-IP failed-login threshold within [`LOCKOUT_WINDOW_MINUTES`].
+const MAX_FAILS_PER_IP: i64 = 20;
+const LOCKOUT_WINDOW_MINUTES: i64 = 15;
+
+/// Hash a session token for storage (blake3; the token is a high-entropy
+/// random value so a fast hash is appropriate).
+pub fn hash_session_token(token: &str) -> String {
+    format!("{SESSION_TOKEN_PREFIX}{}", blake3::hash(token.as_bytes()).to_hex())
+}
+
 /// Validate password strength.
 pub fn validate_password(password: &str) -> Result<(), String> {
     if password.len() < MIN_PASSWORD_LEN {
@@ -132,7 +170,7 @@ impl Store {
     pub async fn create_user(&self, email: &str, name: &str, password: &str) -> Result<User> {
         validate_email(email).map_err(|e| anyhow::anyhow!(e))?;
         validate_password(password).map_err(|e| anyhow::anyhow!(e))?;
-        let hash = hash_password(password)?;
+        let hash = hash_password_async(password).await?;
         self.backend().create_user(email, name, &hash).await?;
         let user = self
             .backend()
@@ -140,6 +178,23 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow::anyhow!("user not found after insert"))?;
         Ok(user)
+    }
+
+    /// Create the first admin atomically (setup wizard). Returns `Ok(None)`
+    /// when a user already exists, so two concurrent setups cannot both win.
+    pub async fn create_first_user(&self, email: &str, name: &str, password: &str) -> Result<Option<User>> {
+        validate_email(email).map_err(|e| anyhow::anyhow!(e))?;
+        validate_password(password).map_err(|e| anyhow::anyhow!(e))?;
+        let hash = hash_password_async(password).await?;
+        if !self.backend().create_first_user(email, name, &hash).await? {
+            return Ok(None);
+        }
+        let user = self
+            .backend()
+            .get_user_by_email(email)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("user not found after insert"))?;
+        Ok(Some(user))
     }
 
     /// Get user by email.
@@ -155,8 +210,21 @@ impl Store {
     /// Update user password.
     pub async fn update_password(&self, user_id: &str, new_password: &str) -> Result<()> {
         validate_password(new_password).map_err(|e| anyhow::anyhow!(e))?;
-        let hash = hash_password(new_password)?;
+        let hash = hash_password_async(new_password).await?;
         self.backend().update_password(user_id, &hash).await
+    }
+
+    /// Invalidate every session of `user_id` except the one identified by the
+    /// raw `keep_token` (pass `None` to drop them all). Used after a password change.
+    pub async fn invalidate_other_sessions(&self, user_id: &str, keep_token: Option<&str>) -> Result<u64> {
+        let keep = keep_token.map(hash_session_token).unwrap_or_default();
+        self.backend().delete_user_sessions_except(user_id, &keep).await
+    }
+
+    /// Remove legacy sessions stored with plaintext tokens (one-time upgrade;
+    /// idempotent). Affected users simply log in again.
+    pub async fn purge_legacy_sessions(&self) -> Result<u64> {
+        self.backend().purge_sessions_without_prefix(SESSION_TOKEN_PREFIX).await
     }
 
     // ── Sessions (#20) ──────────────────────────────────────────────────
@@ -168,14 +236,15 @@ impl Store {
         let expires_at = (now + Duration::days(SESSION_DURATION_DAYS)).to_rfc3339();
         let created_at = now.to_rfc3339();
 
-        self.backend().create_session(user_id, &token, &expires_at).await?;
+        // Only a hash is persisted; the raw token lives in the cookie alone.
+        self.backend().create_session(user_id, &hash_session_token(&token), &expires_at).await?;
 
         Ok(Session { id: new_id(), user_id: user_id.to_string(), token, expires_at, created_at })
     }
 
     /// Get session by token (returns None if expired).
     pub async fn get_session(&self, token: &str) -> Result<Option<Session>> {
-        let session = self.backend().get_session(token).await?;
+        let session = self.backend().get_session(&hash_session_token(token)).await?;
 
         match session {
             Some(s) => {
@@ -183,7 +252,8 @@ impl Store {
                 match expires {
                     Ok(exp) => {
                         if exp.to_utc() < Utc::now() {
-                            self.delete_session(&s.token).await?;
+                            // `s.token` is already the stored hash.
+                            self.backend().delete_session(&s.token).await?;
                             Ok(None)
                         } else {
                             Ok(Some(s))
@@ -198,7 +268,7 @@ impl Store {
 
     /// Delete a session (logout).
     pub async fn delete_session(&self, token: &str) -> Result<()> {
-        self.backend().delete_session(token).await
+        self.backend().delete_session(&hash_session_token(token)).await
     }
 
     /// Cleanup expired sessions.
@@ -223,34 +293,43 @@ impl Store {
         self.backend().count_failed_attempts_ip(ip, minutes).await
     }
 
+    /// Count failed auth attempts for one (email, IP) pair in the last N minutes.
+    pub async fn count_failed_attempts_email_ip(&self, email: &str, ip: &str, minutes: i64) -> Result<i64> {
+        self.backend().count_failed_attempts_email_ip(email, ip, minutes).await
+    }
+
     /// Authenticate a user: verify password + create session.
     /// Returns (session, user_info) on success.
     pub async fn authenticate(&self, email: &str, password: &str, ip: &str) -> Result<(Session, UserInfo), AuthError> {
-        // Check brute-force lockout
-        let email_fails = self.count_failed_attempts_email(email, 15).await.unwrap_or(0);
-        if email_fails >= 5 {
+        // Brute-force lockout. Keyed on (email, IP) rather than email alone, so a
+        // remote attacker cannot lock the real admin out by spamming failures for
+        // their address from another IP. A per-IP cap bounds spraying.
+        let pair_fails = self.count_failed_attempts_email_ip(email, ip, LOCKOUT_WINDOW_MINUTES).await.unwrap_or(0);
+        if pair_fails >= MAX_FAILS_PER_EMAIL_IP {
             let _ = self.record_auth_attempt(email, ip, false).await;
             return Err(AuthError::LockedOut);
         }
 
-        let ip_fails = self.count_failed_attempts_ip(ip, 15).await.unwrap_or(0);
-        if ip_fails >= 20 {
+        let ip_fails = self.count_failed_attempts_ip(ip, LOCKOUT_WINDOW_MINUTES).await.unwrap_or(0);
+        if ip_fails >= MAX_FAILS_PER_IP {
             let _ = self.record_auth_attempt(email, ip, false).await;
             return Err(AuthError::LockedOut);
         }
 
-        // Find user
+        // Find user. For unknown emails still burn one Argon2 verification so
+        // response time does not reveal whether the account exists.
         let user = self.get_user_by_email(email).await.map_err(|_| AuthError::Internal)?;
         let user = match user {
             Some(u) => u,
             None => {
+                let _ = verify_password_async(password, dummy_hash()).await;
                 let _ = self.record_auth_attempt(email, ip, false).await;
                 return Err(AuthError::InvalidCredentials);
             }
         };
 
-        // Verify password
-        if !verify_password(password, &user.password_hash) {
+        // Verify password (off the async runtime)
+        if !verify_password_async(password, &user.password_hash).await {
             let _ = self.record_auth_attempt(email, ip, false).await;
             return Err(AuthError::InvalidCredentials);
         }
@@ -436,5 +515,87 @@ mod tests {
 
         let result = store.create_user("not-an-email", "Test", "password123").await;
         assert!(result.is_err());
+    }
+
+    async fn mem_store() -> Store {
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        Store::new(backend)
+    }
+
+    #[tokio::test]
+    async fn lockout_does_not_let_other_ip_lock_out_real_user() {
+        let store = mem_store().await;
+        store.create_user("admin@test.com", "Admin", "password123").await.unwrap();
+        // Attacker hammers the admin's email from their own IP.
+        for _ in 0..10 {
+            let _ = store.authenticate("admin@test.com", "wrong", "6.6.6.6").await;
+        }
+        assert!(matches!(store.authenticate("admin@test.com", "wrong", "6.6.6.6").await, Err(AuthError::LockedOut)));
+        // The real admin on a different IP is unaffected.
+        assert!(store.authenticate("admin@test.com", "password123", "1.2.3.4").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn setup_is_atomic_single_admin() {
+        let store = mem_store().await;
+        let (a, b) = tokio::join!(
+            store.create_first_user("a@test.com", "A", "password123"),
+            store.create_first_user("b@test.com", "B", "password123"),
+        );
+        let winners = [a.unwrap(), b.unwrap()].iter().filter(|u| u.is_some()).count();
+        assert_eq!(winners, 1);
+        assert!(store.create_first_user("c@test.com", "C", "password123").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn session_token_stored_hashed() {
+        let store = mem_store().await;
+        store.create_user("h@test.com", "H", "password123").await.unwrap();
+        let (session, _) = store.authenticate("h@test.com", "password123", "1.1.1.1").await.unwrap();
+        // The raw token must not be a valid lookup key in the DB.
+        assert!(store.backend().get_session(&session.token).await.unwrap().is_none());
+        assert!(store.backend().get_session(&hash_session_token(&session.token)).await.unwrap().is_some());
+        assert!(store.get_session(&session.token).await.unwrap().is_some());
+        store.delete_session(&session.token).await.unwrap();
+        assert!(store.get_session(&session.token).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn purge_legacy_plaintext_sessions() {
+        let store = mem_store().await;
+        let user = store.create_user("l@test.com", "L", "password123").await.unwrap();
+        let exp = (Utc::now() + Duration::days(1)).to_rfc3339();
+        store.backend().create_session(&user.id, "legacy-plain-token", &exp).await.unwrap();
+        let fresh = store.create_session(&user.id).await.unwrap();
+        assert_eq!(store.purge_legacy_sessions().await.unwrap(), 1);
+        assert!(store.get_session(&fresh.token).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn invalidate_other_sessions_keeps_current() {
+        let store = mem_store().await;
+        let user = store.create_user("i@test.com", "I", "password123").await.unwrap();
+        let keep = store.create_session(&user.id).await.unwrap();
+        let other = store.create_session(&user.id).await.unwrap();
+        assert_eq!(store.invalidate_other_sessions(&user.id, Some(&keep.token)).await.unwrap(), 1);
+        assert!(store.get_session(&keep.token).await.unwrap().is_some());
+        assert!(store.get_session(&other.token).await.unwrap().is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn argon2_does_not_block_current_thread_runtime() {
+        // A ticker task must keep making progress while a hash is computed.
+        let ticks = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let t = ticks.clone();
+        let ticker = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                t.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        let _ = hash_password_async("password123").await.unwrap();
+        ticker.abort();
+        assert!(ticks.load(std::sync::atomic::Ordering::Relaxed) > 0);
     }
 }

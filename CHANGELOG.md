@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Login/session hardening** (#334): client IP for login rate limiting is now the TCP peer address; `X-Forwarded-For`/`X-Real-IP` are honoured only with the new `TRAPFALL_TRUST_PROXY=true` (**breaking for reverse-proxy deployments**: set it, otherwise all clients share the proxy IP). Lockout is keyed per (email, IP) so an attacker cannot lock the admin out from elsewhere. Argon2 runs on the blocking pool. First-admin setup is atomic. Session tokens are stored hashed; **existing sessions are invalidated once on upgrade** (users re-login). Changing the password revokes other sessions.
+
 ## [0.3.0] - 2026-09-03
 
 ### Added

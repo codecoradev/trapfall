@@ -30,6 +30,14 @@ pub struct Config {
     /// Set to `false`/`0` for local HTTP development.
     #[serde(default = "default_secure_cookie")]
     pub secure_cookie: bool,
+    /// Trust `X-Forwarded-For` / `X-Real-IP` for the client IP used by login
+    /// rate limiting (`TRAPFALL_TRUST_PROXY`, default `false`).
+    ///
+    /// Enable **only** when TrapFall sits behind a reverse proxy that sets or
+    /// overwrites these headers. When disabled (default) the TCP peer address
+    /// is used, so clients cannot spoof their IP to evade lockout.
+    #[serde(default)]
+    pub trust_proxy: bool,
     /// Display timezone (`TRAPFALL_TIMEZONE`, default `UTC`).
     ///
     /// IANA timezone name (e.g. `Asia/Jakarta`, `America/New_York`). Used
@@ -137,6 +145,7 @@ impl Config {
             cors_origins: parse_cors_origins(),
             secure_cookie: parse_secure_cookie(),
             public_url: parse_public_url(),
+            trust_proxy: parse_trust_proxy(),
             timezone: parse_timezone(),
             max_ingest_body_bytes: parse_max_ingest_body_bytes(),
             max_body_bytes: parse_max_body_bytes(),
@@ -190,6 +199,14 @@ fn parse_secure_cookie() -> bool {
             !(lower == "false" || lower == "0" || lower == "no" || lower == "off")
         }
         Err(_) => default_secure_cookie(),
+    }
+}
+
+/// Parse `TRAPFALL_TRUST_PROXY` (default `false`; `true`/`1`/`yes`/`on` enable).
+fn parse_trust_proxy() -> bool {
+    match std::env::var("TRAPFALL_TRUST_PROXY") {
+        Ok(v) => matches!(v.trim().to_lowercase().as_str(), "true" | "1" | "yes" | "on"),
+        Err(_) => false,
     }
 }
 
@@ -310,6 +327,7 @@ pub(crate) fn tests_base_cfg() -> Config {
         cors_origins: vec![],
         secure_cookie: true,
         public_url: None,
+        trust_proxy: false,
         timezone: "UTC".to_string(),
         max_ingest_body_bytes: default_max_ingest_body_bytes(),
         max_body_bytes: default_max_body_bytes(),
