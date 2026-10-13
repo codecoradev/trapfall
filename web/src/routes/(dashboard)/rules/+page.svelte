@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { resolveProject, storeProject } from '$lib/project-selection';
 	import { api, type Project, type AlertRule, type CreateAlertRule } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
@@ -52,11 +53,7 @@
 
 			// Restore from URL or default to first
 			const queryProject = page.url.searchParams.get('project');
-			if (queryProject && projects.some(p => p.slug === queryProject)) {
-				selectedProject = queryProject;
-			} else {
-				selectedProject = projects[0].slug;
-			}
+			selectedProject = resolveProject(projects, queryProject);
 
 			await loadRules();
 		} catch (e: any) {
@@ -67,6 +64,7 @@
 
 	function switchProject(slug: string) {
 		selectedProject = slug;
+		storeProject(slug);
 		goto(`/rules?project=${slug}`, { replaceState: true });
 		loadRules();
 	}

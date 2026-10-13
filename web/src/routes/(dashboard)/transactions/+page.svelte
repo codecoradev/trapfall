@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { resolveProject, storeProject } from '$lib/project-selection';
 	import { api, type Project, type TransactionResponse } from '$lib/api';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -73,6 +74,7 @@
 
 	function switchProject(slug: string) {
 		selectedProject = slug;
+		storeProject(slug);
 		currentPage = 1;
 		navigate();
 		loadSlowest();
@@ -95,7 +97,7 @@
 
 			const sp = page.url.searchParams;
 			const qp = sp.get('project');
-			selectedProject = (qp && projects.some((p) => p.slug === qp)) ? qp : projects[0].slug;
+			selectedProject = resolveProject(projects, qp);
 			currentPage = parseInt(sp.get('page') || '1', 10) || 1;
 
 			await Promise.all([loadSlowest(), loadTransactions()]);

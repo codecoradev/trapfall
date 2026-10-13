@@ -34,6 +34,12 @@ pub async fn spa_handler(uri: axum::http::Uri) -> Response {
             .into_response();
     }
 
+    // Missing static assets must 404 rather than return index.html with 200,
+    // which would be parsed as JS/CSS/image and fail confusingly.
+    if is_asset_like(path) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     // Fallback to index.html for client-side routing. The embedded asset is
     // static for the lifetime of the binary, so cache the decoded string once
     // instead of re-allocating per request.
@@ -45,6 +51,16 @@ pub async fn spa_handler(uri: axum::http::Uri) -> Response {
         Some(h) => (StatusCode::OK, [(header::CACHE_CONTROL, "no-cache")], Html(h.clone())).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// A path looks like a static asset if it is under `_app/` or its final
+/// segment has a file extension. Extension-less paths are client routes.
+fn is_asset_like(path: &str) -> bool {
+    if path.starts_with("_app/") {
+        return true;
+    }
+    let last = path.rsplit('/').next().unwrap_or("");
+    last.rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty())
 }
 
 /// Check if path is a hashed/immutable static asset (JS/CSS/fonts/images).
@@ -59,4 +75,33 @@ fn is_immutable_asset(path: &str) -> bool {
         || path.ends_with(".jpg")
         || path.ends_with(".svg")
         || path.ends_with(".ico")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn status(path: &str) -> StatusCode {
+        spa_handler(path.parse().expect("valid uri")).await.status()
+    }
+
+    #[tokio::test]
+    async fn missing_asset_with_extension_is_404() {
+        assert_eq!(status("/missing-file.png").await, StatusCode::NOT_FOUND);
+        assert_eq!(status("/nope/app.js").await, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn missing_app_path_is_404() {
+        assert_eq!(status("/_app/immutable/entry/missing.hash").await, StatusCode::NOT_FOUND);
+        assert_eq!(status("/_app/missing.js").await, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn client_routes_fall_back_to_index() {
+        assert_eq!(status("/issues/123").await, StatusCode::OK);
+        assert_eq!(status("/").await, StatusCode::OK);
+        // dots in a non-final segment don't make it a file
+        assert_eq!(status("/releases/1.2.3/overview").await, StatusCode::OK);
+    }
 }
