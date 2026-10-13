@@ -1002,16 +1002,16 @@ async fn spoofed_forwarded_for_does_not_evade_ip_lockout() {
     let app = router(make_state(store, RateLimiter::default()));
     setup_and_get_cookie(&app).await;
 
-    // 25 failures for distinct emails, each claiming a different XFF address.
+    // 6 failures for the admin email, each claiming a different XFF address.
     // With trust_proxy=false all share the (absent) peer identity, so the
-    // per-IP cap must trip and even the correct password is then rejected.
-    for i in 0..25 {
+    // (email, IP) lockout must trip and even the correct password is rejected.
+    for i in 0..6 {
         let req = Request::builder()
             .method("POST")
             .uri("/api/0/auth/login")
             .header("content-type", "application/json")
             .header("x-forwarded-for", format!("10.9.9.{i}"))
-            .body(Body::from(format!(r#"{{"email":"nobody{i}@test.com","password":"wrong"}}"#)))
+            .body(Body::from(r#"{"email":"admin@test.com","password":"wrong"}"#))
             .unwrap();
         let _ = app.clone().oneshot(req).await.unwrap();
     }

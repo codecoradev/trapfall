@@ -151,7 +151,9 @@ pub async fn login(
 ) -> Result<(StatusCode, [(String, String); 1], Json<LoginResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = state.store.clone();
 
-    let ip = client_ip(&headers, peer.map(|c| (c.0).0.ip()), state.config.trust_proxy);
+    let peer_ip = peer.map(|c| (c.0).0.ip());
+    warn_if_unconfigured_proxy(&headers, peer_ip, state.config.trust_proxy);
+    let ip = client_ip(&headers, peer_ip, state.config.trust_proxy);
     let ip = ip.as_str();
 
     match store.authenticate(&req.email, &req.password, ip).await {
@@ -341,6 +343,37 @@ pub(crate) fn client_ip(headers: &axum::http::HeaderMap, peer: Option<std::net::
     peer.map(|p| p.to_string()).unwrap_or_else(|| "unknown".to_string())
 }
 
+fn is_local_or_private(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+/// True when a loopback/private peer sends proxy headers while `trust_proxy`
+/// is off: almost certainly a reverse proxy, so all clients share one IP.
+pub(crate) fn looks_like_unconfigured_proxy(
+    headers: &axum::http::HeaderMap,
+    peer: Option<std::net::IpAddr>,
+    trust_proxy: bool,
+) -> bool {
+    !trust_proxy
+        && peer.is_some_and(is_local_or_private)
+        && (headers.contains_key("x-forwarded-for") || headers.contains_key("x-real-ip"))
+}
+
+/// Log (once per process) that `TRAPFALL_TRUST_PROXY` probably needs enabling.
+fn warn_if_unconfigured_proxy(headers: &axum::http::HeaderMap, peer: Option<std::net::IpAddr>, trust_proxy: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if looks_like_unconfigured_proxy(headers, peer, trust_proxy) && !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "Login requests arrive from a private/loopback peer carrying X-Forwarded-For; all clients share one \
+             rate-limit identity. If TrapFall is behind a reverse proxy, set TRAPFALL_TRUST_PROXY=true."
+        );
+    }
+}
+
 /// Extract session token from Cookie header.
 pub fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
@@ -402,6 +435,16 @@ mod client_ip_tests {
     }
     fn peer() -> Option<IpAddr> {
         Some("10.0.0.7".parse().unwrap())
+    }
+
+    #[test]
+    fn detects_unconfigured_proxy() {
+        let h = hm("x-forwarded-for", "1.2.3.4");
+        assert!(super::looks_like_unconfigured_proxy(&h, peer(), false));
+        assert!(super::looks_like_unconfigured_proxy(&h, Some("127.0.0.1".parse().unwrap()), false));
+        assert!(!super::looks_like_unconfigured_proxy(&h, peer(), true));
+        assert!(!super::looks_like_unconfigured_proxy(&h, Some("8.8.8.8".parse().unwrap()), false));
+        assert!(!super::looks_like_unconfigured_proxy(&HeaderMap::new(), peer(), false));
     }
 
     #[test]

@@ -112,7 +112,15 @@ pub const SESSION_TOKEN_PREFIX: &str = "h1:";
 /// Per-(email, IP) failed-login threshold within [`LOCKOUT_WINDOW_MINUTES`].
 const MAX_FAILS_PER_EMAIL_IP: i64 = 5;
 /// Per-IP failed-login threshold within [`LOCKOUT_WINDOW_MINUTES`].
-const MAX_FAILS_PER_IP: i64 = 20;
+///
+/// Deliberately high: behind a reverse proxy without `TRAPFALL_TRUST_PROXY`
+/// every client shares one IP, and a low cap would let one attacker lock out
+/// everyone.
+const MAX_FAILS_PER_IP: i64 = 100;
+/// Global per-email ceiling across all IPs. Bounds IP-rotating guessing
+/// (botnets, IPv6 ranges) at ~30 guesses / 15 min. Trade-off: an attacker with
+/// many IPs can still lock the account for the rest of the window.
+const MAX_FAILS_PER_EMAIL: i64 = 30;
 const LOCKOUT_WINDOW_MINUTES: i64 = 15;
 
 /// Hash a session token for storage (blake3; the token is a high-entropy
@@ -306,6 +314,12 @@ impl Store {
         // their address from another IP. A per-IP cap bounds spraying.
         let pair_fails = self.count_failed_attempts_email_ip(email, ip, LOCKOUT_WINDOW_MINUTES).await.unwrap_or(0);
         if pair_fails >= MAX_FAILS_PER_EMAIL_IP {
+            let _ = self.record_auth_attempt(email, ip, false).await;
+            return Err(AuthError::LockedOut);
+        }
+
+        let email_fails = self.count_failed_attempts_email(email, LOCKOUT_WINDOW_MINUTES).await.unwrap_or(0);
+        if email_fails >= MAX_FAILS_PER_EMAIL {
             let _ = self.record_auth_attempt(email, ip, false).await;
             return Err(AuthError::LockedOut);
         }
@@ -534,6 +548,33 @@ mod tests {
         assert!(matches!(store.authenticate("admin@test.com", "wrong", "6.6.6.6").await, Err(AuthError::LockedOut)));
         // The real admin on a different IP is unaffected.
         assert!(store.authenticate("admin@test.com", "password123", "1.2.3.4").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ip_rotation_is_bounded_by_global_email_ceiling() {
+        let store = mem_store().await;
+        store.create_user("admin@test.com", "Admin", "password123").await.unwrap();
+        // A botnet: a few failures from each of many distinct IPs.
+        for i in 0..(MAX_FAILS_PER_EMAIL + 1) {
+            store.record_auth_attempt("admin@test.com", &format!("7.7.{}.{}", i / 200, i % 200), false).await.unwrap();
+        }
+        // Even from a fresh IP the account is now locked (bounded guessing).
+        assert!(matches!(
+            store.authenticate("admin@test.com", "password123", "8.8.8.8").await,
+            Err(AuthError::LockedOut)
+        ));
+    }
+
+    #[tokio::test]
+    async fn shared_proxy_ip_cap_does_not_block_unrelated_user_quickly() {
+        let store = mem_store().await;
+        store.create_user("admin@test.com", "Admin", "password123").await.unwrap();
+        // 25 failures for *other* emails behind the same (proxy) IP must not
+        // lock the admin out (cap used to be 20).
+        for i in 0..25 {
+            store.record_auth_attempt(&format!("x{i}@test.com"), "10.0.0.1", false).await.unwrap();
+        }
+        assert!(store.authenticate("admin@test.com", "password123", "10.0.0.1").await.is_ok());
     }
 
     #[tokio::test]
