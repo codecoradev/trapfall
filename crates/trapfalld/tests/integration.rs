@@ -57,6 +57,7 @@ fn make_state(store: Store, rate_limiter: RateLimiter) -> AppState {
         cors_origins: Vec::new(),
         secure_cookie: false,
         public_url: None,
+        trust_proxy: false,
         timezone: "UTC".to_string(),
         max_ingest_body_bytes: 2 * 1024 * 1024,
         max_body_bytes: 10 * 1024 * 1024,
@@ -477,7 +478,7 @@ async fn auth_rejects_expired_session() {
     sqlx::query("INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind("sess-expired")
         .bind(&user_id)
-        .bind(expired_token)
+        .bind(trapfall_core::auth::hash_session_token(expired_token))
         .bind(&past)
         .bind(&past)
         .execute(pool)
@@ -963,4 +964,63 @@ async fn reserved_slug_create_returns_400() {
     }
     let ok = status_of(&app, "POST", "/api/0/projects", Some(&cookie), r#"{"name":"Fine","slug":"fine"}"#).await;
     assert_eq!(ok, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn change_password_invalidates_other_sessions_keeps_current() {
+    let store = test_store().await;
+    let app = router(make_state(store, RateLimiter::default()));
+    let current = setup_and_get_cookie(&app).await;
+
+    // A second session (e.g. a stolen cookie) obtained via login.
+    let login = Request::builder()
+        .method("POST")
+        .uri("/api/0/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"email":"admin@test.com","password":"password123"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(login).await.unwrap();
+    let other = resp.headers().get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+
+    let change = Request::builder()
+        .method("POST")
+        .uri("/api/0/auth/change-password")
+        .header("content-type", "application/json")
+        .header("cookie", &current)
+        .body(Body::from(r#"{"current_password":"password123","new_password":"newpassword456"}"#))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(change).await.unwrap().status(), StatusCode::OK);
+
+    let me = |c: &str| Request::builder().uri("/api/0/auth/me").header("cookie", c).body(Body::empty()).unwrap();
+    assert_eq!(app.clone().oneshot(me(&current)).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(app.clone().oneshot(me(&other)).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn spoofed_forwarded_for_does_not_evade_ip_lockout() {
+    let store = test_store().await;
+    let app = router(make_state(store, RateLimiter::default()));
+    setup_and_get_cookie(&app).await;
+
+    // 6 failures for the admin email, each claiming a different XFF address.
+    // With trust_proxy=false all share the (absent) peer identity, so the
+    // (email, IP) lockout must trip and even the correct password is rejected.
+    for i in 0..6 {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/0/auth/login")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", format!("10.9.9.{i}"))
+            .body(Body::from(r#"{"email":"admin@test.com","password":"wrong"}"#))
+            .unwrap();
+        let _ = app.clone().oneshot(req).await.unwrap();
+    }
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/0/auth/login")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "10.9.9.200")
+        .body(Body::from(r#"{"email":"admin@test.com","password":"password123"}"#))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
 }

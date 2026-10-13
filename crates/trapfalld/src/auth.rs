@@ -6,7 +6,7 @@
 //! - #23: Brute-force lockout (enforced via Store::authenticate)
 
 use axum::Router;
-use axum::extract::{FromRequestParts, State};
+use axum::extract::{ConnectInfo, FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -100,16 +100,15 @@ pub async fn setup(
 ) -> Result<(StatusCode, [(String, String); 1], Json<SetupResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = state.store.clone();
 
-    // Only allow when no users exist
-    if store.has_users().await.unwrap_or(false) {
-        return Err((StatusCode::FORBIDDEN, Json(AuthErrorJson { error: "Setup already completed".into() })));
-    }
-
-    // Create admin user
-    let user = store
-        .create_user(&req.email, &req.name, &req.password)
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(AuthErrorJson { error: e.to_string() })))?;
+    // Atomic first-admin creation: the check and insert are a single statement
+    // (plus an advisory lock on Postgres), so concurrent setups cannot both win.
+    let user = match store.create_first_user(&req.email, &req.name, &req.password).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return Err((StatusCode::FORBIDDEN, Json(AuthErrorJson { error: "Setup already completed".into() })));
+        }
+        Err(e) => return Err((StatusCode::BAD_REQUEST, Json(AuthErrorJson { error: e.to_string() }))),
+    };
 
     // Create default project. Prefer configured public_url for DSN;
     // fall back to request Host header so local dev keeps working.
@@ -146,19 +145,16 @@ pub async fn setup(
 /// POST /api/auth/login — Authenticate and set session cookie.
 pub async fn login(
     State(state): State<AppState>,
+    peer: Option<axum::extract::Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<(StatusCode, [(String, String); 1], Json<LoginResponse>), (StatusCode, Json<AuthErrorJson>)> {
     let store = state.store.clone();
 
-    // Extract client IP (best-effort, first IP from XFF, validated)
-    let ip = headers
-        .get("x-forwarded-for")
-        .or_else(|| headers.get("x-real-ip"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next().map(|s| s.trim()))
-        .filter(|s| s.parse::<std::net::IpAddr>().is_ok())
-        .unwrap_or("unknown");
+    let peer_ip = peer.map(|c| (c.0).0.ip());
+    warn_if_unconfigured_proxy(&headers, peer_ip, state.config.trust_proxy);
+    let ip = client_ip(&headers, peer_ip, state.config.trust_proxy);
+    let ip = ip.as_str();
 
     match store.authenticate(&req.email, &req.password, ip).await {
         Ok((session, user_info)) => {
@@ -207,6 +203,7 @@ pub async fn me(user: AuthenticatedUser) -> Json<UserInfo> {
 /// POST /api/auth/change-password — Change password for authenticated user.
 pub async fn change_password(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     user: AuthenticatedUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<AuthErrorJson>)> {
@@ -219,7 +216,7 @@ pub async fn change_password(
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: "Internal error".into() })))?
         .ok_or((StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "User not found".into() })))?;
 
-    if !trapfall_core::auth::verify_password(&req.current_password, &db_user.password_hash) {
+    if !trapfall_core::auth::verify_password_async(&req.current_password, &db_user.password_hash).await {
         return Err((StatusCode::UNAUTHORIZED, Json(AuthErrorJson { error: "Current password is incorrect".into() })));
     }
 
@@ -231,6 +228,13 @@ pub async fn change_password(
         .update_password(&db_user.id, &req.new_password)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: e.to_string() })))?;
+
+    // A password change must end any other (possibly stolen) sessions; keep the caller's.
+    let current = extract_session_token(&headers);
+    if let Err(e) = store.invalidate_other_sessions(&db_user.id, current.as_deref()).await {
+        tracing::warn!("Failed to invalidate sessions after password change: {e}");
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(AuthErrorJson { error: "Internal error".into() })));
+    }
 
     Ok(StatusCode::OK)
 }
@@ -313,6 +317,63 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
+/// Determine the client IP used for login rate limiting.
+///
+/// By default only the TCP peer address is used. When `trust_proxy` is set
+/// (TrapFall is behind a proxy that overwrites the headers), the *rightmost*
+/// valid `X-Forwarded-For` entry (the address our proxy observed) or `X-Real-IP`
+/// is used instead; a client-supplied leftmost entry is never trusted.
+pub(crate) fn client_ip(headers: &axum::http::HeaderMap, peer: Option<std::net::IpAddr>, trust_proxy: bool) -> String {
+    if trust_proxy {
+        let from_xff = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.rsplit(',').next())
+            .map(str::trim)
+            .filter(|s| s.parse::<std::net::IpAddr>().is_ok());
+        let from_real = headers
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|s| s.parse::<std::net::IpAddr>().is_ok());
+        if let Some(ip) = from_xff.or(from_real) {
+            return ip.to_string();
+        }
+    }
+    peer.map(|p| p.to_string()).unwrap_or_else(|| "unknown".to_string())
+}
+
+fn is_local_or_private(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+/// True when a loopback/private peer sends proxy headers while `trust_proxy`
+/// is off: almost certainly a reverse proxy, so all clients share one IP.
+pub(crate) fn looks_like_unconfigured_proxy(
+    headers: &axum::http::HeaderMap,
+    peer: Option<std::net::IpAddr>,
+    trust_proxy: bool,
+) -> bool {
+    !trust_proxy
+        && peer.is_some_and(is_local_or_private)
+        && (headers.contains_key("x-forwarded-for") || headers.contains_key("x-real-ip"))
+}
+
+/// Log (once per process) that `TRAPFALL_TRUST_PROXY` probably needs enabling.
+fn warn_if_unconfigured_proxy(headers: &axum::http::HeaderMap, peer: Option<std::net::IpAddr>, trust_proxy: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if looks_like_unconfigured_proxy(headers, peer, trust_proxy) && !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "Login requests arrive from a private/loopback peer carrying X-Forwarded-For; all clients share one \
+             rate-limit identity. If TrapFall is behind a reverse proxy, set TRAPFALL_TRUST_PROXY=true."
+        );
+    }
+}
+
 /// Extract session token from Cookie header.
 pub fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
@@ -358,5 +419,50 @@ mod public_path_tests {
         ] {
             assert!(!is_public_path(p), "{p}");
         }
+    }
+}
+
+#[cfg(test)]
+mod client_ip_tests {
+    use super::client_ip;
+    use axum::http::HeaderMap;
+    use std::net::IpAddr;
+
+    fn hm(k: &'static str, v: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(k, v.parse().unwrap());
+        h
+    }
+    fn peer() -> Option<IpAddr> {
+        Some("10.0.0.7".parse().unwrap())
+    }
+
+    #[test]
+    fn detects_unconfigured_proxy() {
+        let h = hm("x-forwarded-for", "1.2.3.4");
+        assert!(super::looks_like_unconfigured_proxy(&h, peer(), false));
+        assert!(super::looks_like_unconfigured_proxy(&h, Some("127.0.0.1".parse().unwrap()), false));
+        assert!(!super::looks_like_unconfigured_proxy(&h, peer(), true));
+        assert!(!super::looks_like_unconfigured_proxy(&h, Some("8.8.8.8".parse().unwrap()), false));
+        assert!(!super::looks_like_unconfigured_proxy(&HeaderMap::new(), peer(), false));
+    }
+
+    #[test]
+    fn spoofed_headers_ignored_by_default() {
+        assert_eq!(client_ip(&hm("x-forwarded-for", "1.2.3.4"), peer(), false), "10.0.0.7");
+        assert_eq!(client_ip(&hm("x-real-ip", "1.2.3.4"), peer(), false), "10.0.0.7");
+    }
+
+    #[test]
+    fn trusted_proxy_uses_rightmost_xff() {
+        // Leftmost is attacker-controlled; the proxy appended the real one last.
+        assert_eq!(client_ip(&hm("x-forwarded-for", "9.9.9.9, 1.2.3.4"), peer(), true), "1.2.3.4");
+    }
+
+    #[test]
+    fn trusted_proxy_falls_back_to_real_ip_then_peer() {
+        assert_eq!(client_ip(&hm("x-real-ip", "5.6.7.8"), peer(), true), "5.6.7.8");
+        assert_eq!(client_ip(&hm("x-forwarded-for", "garbage"), peer(), true), "10.0.0.7");
+        assert_eq!(client_ip(&HeaderMap::new(), None, true), "unknown");
     }
 }

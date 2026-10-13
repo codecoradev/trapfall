@@ -876,6 +876,58 @@ impl Database for PostgresBackend {
         Ok(false)
     }
 
+    async fn count_failed_attempts_email_ip(&self, email: &str, ip: &str, minutes: i64) -> Result<i64> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339();
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*) FROM auth_attempts WHERE email = $1 AND ip = $2 AND success = FALSE AND created_at > $3",
+        )
+        .bind(email)
+        .bind(ip)
+        .bind(&cutoff)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(c,)| c).unwrap_or(0))
+    }
+
+    async fn create_first_user(&self, email: &str, name: &str, password_hash: &str) -> Result<bool> {
+        let id = new_id();
+        let now = now_rfc3339();
+        let mut tx = self.pool.begin().await?;
+        // Serialise concurrent setups: READ COMMITTED alone would let two
+        // transactions both see an empty users table.
+        sqlx::query("SELECT pg_advisory_xact_lock(7461706661)").execute(&mut *tx).await?;
+        let result = sqlx::query(
+            "INSERT INTO users (id, email, name, password_hash, role, created_at) \
+             SELECT $1, $2, $3, $4, 'admin', $5 WHERE NOT EXISTS (SELECT 1 FROM users)",
+        )
+        .bind(&id)
+        .bind(email)
+        .bind(name)
+        .bind(password_hash)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_user_sessions_except(&self, user_id: &str, keep_token: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token <> $2")
+            .bind(user_id)
+            .bind(keep_token)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    async fn purge_sessions_without_prefix(&self, prefix: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sessions WHERE token NOT LIKE $1")
+            .bind(format!("{prefix}%"))
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     // ── Health ─────────────────────────────────────────────────────────
 
     async fn ping(&self) -> Result<bool> {
