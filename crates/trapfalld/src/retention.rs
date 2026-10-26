@@ -53,4 +53,35 @@ mod tests {
     fn default_retention_is_90_days() {
         assert_eq!(DEFAULT_RETENTION_DAYS, 90);
     }
+
+    #[tokio::test]
+    async fn purge_deletes_old_check_ins_but_keeps_monitors() {
+        use trapfall_proto::{CheckIn, CheckInStatus};
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        let store = Store::new(backend);
+        let project = store.create_project("cron", "Cron").await.unwrap();
+        let ci = |id: &str, slug: &str| CheckIn {
+            check_in_id: id.into(),
+            monitor_slug: slug.into(),
+            status: CheckInStatus::Ok,
+            duration: None,
+            timestamp: None,
+            monitor_config: None,
+        };
+        let db = store.backend();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.record_check_in(&project.id, &ci("old", "mixed"), "2020-01-01T00:00:00+00:00").await.unwrap();
+        db.record_check_in(&project.id, &ci("new", "mixed"), &now).await.unwrap();
+        db.record_check_in(&project.id, &ci("old-only", "stale"), "2020-01-01T00:00:00+00:00").await.unwrap();
+
+        purge_old_events(&store, 90).await.unwrap();
+
+        let monitors = db.list_monitors(&project.id).await.unwrap();
+        assert_eq!(monitors.len(), 2, "monitor state rows must survive purge");
+        let id = |slug: &str| monitors.iter().find(|m| m.slug == slug).unwrap().id.clone();
+        let (rows, total) = db.list_check_ins(&project.id, &id("mixed"), 10, 0).await.unwrap().unwrap();
+        assert_eq!((total, rows[0].check_in_id.as_str()), (1, "new"));
+        assert_eq!(db.list_check_ins(&project.id, &id("stale"), 10, 0).await.unwrap().unwrap().1, 0);
+    }
 }

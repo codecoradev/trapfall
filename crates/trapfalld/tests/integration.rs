@@ -1024,3 +1024,67 @@ async fn spoofed_forwarded_for_does_not_evade_ip_lockout() {
         .unwrap();
     assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
 }
+
+// ── Crons: check_in ingest + monitor endpoints ─────────────────────────
+
+fn make_check_in_envelope_body() -> Vec<u8> {
+    let header = r#"{"event_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
+    let item_header = r#"{"type":"check_in"}"#;
+    let item = r#"{"check_in_id":"ci-0001","monitor_slug":"nightly-backup","status":"ok","duration":1.5,"monitor_config":{"schedule":{"type":"crontab","value":"0 3 * * *"},"checkin_margin":5}}"#;
+    format!("{header}\n{item_header}\n{item}").into_bytes()
+}
+
+async fn get_json(app: &Router, cookie: &str, uri: &str) -> serde_json::Value {
+    let req = Request::builder().uri(uri).header("cookie", cookie).body(Body::empty()).unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "GET {uri}");
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn check_in_ingest_registers_monitor_and_lists_checkins() {
+    let store = test_store().await;
+    let project_id = seed_project(&store).await;
+    let app = router(make_state(store, RateLimiter::default()));
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/{project_id}/envelope/"))
+        .header("content-type", "application/octet-stream")
+        .header("authorization", "Bearer abc123")
+        .body(Body::from(make_check_in_envelope_body()))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::OK);
+
+    let cookie = setup_and_get_cookie(&app).await;
+
+    let monitors = get_json(&app, &cookie, "/api/0/projects/test-project/monitors").await;
+    let monitors = monitors.as_array().expect("monitors array");
+    assert_eq!(monitors.len(), 1);
+    let m = &monitors[0];
+    assert_eq!(m["slug"], "nightly-backup");
+    assert_eq!(m["last_status"], "ok");
+    assert_eq!(m["schedule"], "0 3 * * *");
+    assert_eq!(m["checkin_margin"], 5);
+    assert!(!m["last_seen"].as_str().unwrap().is_empty());
+
+    let monitor_id = m["id"].as_str().unwrap();
+    let page = get_json(&app, &cookie, &format!("/api/0/projects/test-project/monitors/{monitor_id}/checkins")).await;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["page"], 1);
+    assert_eq!(page["per_page"], 20);
+    let data = page["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["check_in_id"], "ci-0001");
+    assert_eq!(data[0]["status"], "ok");
+    assert_eq!(data[0]["duration"], 1.5);
+
+    // Unknown monitor id → 404.
+    let req = Request::builder()
+        .uri("/api/0/projects/test-project/monitors/nope/checkins")
+        .header("cookie", &cookie)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::NOT_FOUND);
+}

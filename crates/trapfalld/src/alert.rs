@@ -381,6 +381,51 @@ mod tests {
         assert_eq!(sig.history_ref(), "monitor:nightly");
     }
 
+    #[tokio::test]
+    async fn process_signal_monitor_missed_dispatch_and_cooldown() {
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        let store = Store::new(backend);
+        let project = store.create_project("cron", "Cron").await.unwrap();
+        // Plain-http URL is rejected before any network I/O, so dispatch fails
+        // deterministically and offline; that is enough to exercise the history path.
+        let rule = store
+            .create_alert_rule(&project.id, "r", "{}", "webhook", r#"{"url":"http://example.com/h"}"#, 3600)
+            .await
+            .unwrap();
+        let sig = AlertSignal::MonitorMissed {
+            project_id: project.id.clone(),
+            monitor_slug: "nightly".into(),
+            last_status: "ok".into(),
+            last_seen: "2026-01-01T03:00:05Z".into(),
+            schedule: Some("0 3 * * *".into()),
+        };
+        let history = || async {
+            sqlx::query_as::<_, (String, String)>("SELECT issue_id, status FROM alert_history WHERE rule_id = ?")
+                .bind(&rule.id)
+                .fetch_all(store.backend().sqlite_pool().unwrap())
+                .await
+                .unwrap()
+        };
+
+        process_signal(&store, &sig).await.unwrap();
+        assert_eq!(history().await, vec![("monitor:nightly".to_string(), "failed".to_string())]);
+
+        // Failed sends don't start a cooldown, so a second signal dispatches again.
+        process_signal(&store, &sig).await.unwrap();
+        assert_eq!(history().await.len(), 2);
+
+        // A successful send puts the rule on cooldown: the next signal is skipped.
+        let sent: (String,) = sqlx::query_as("SELECT id FROM alert_history WHERE rule_id = ? LIMIT 1")
+            .bind(&rule.id)
+            .fetch_one(store.backend().sqlite_pool().unwrap())
+            .await
+            .unwrap();
+        store.mark_alert_sent(&sent.0).await.unwrap();
+        process_signal(&store, &sig).await.unwrap();
+        assert_eq!(history().await.len(), 2);
+    }
+
     #[test]
     fn test_ip_is_private_loopback() {
         assert!(ip_is_private("127.0.0.1".parse().unwrap()));
