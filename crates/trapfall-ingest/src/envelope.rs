@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::io::Read;
-use trapfall_proto::{Attachment, Event, ParsedEnvelope, SessionAggregates, SessionUpdate, Transaction};
+use trapfall_proto::{Attachment, CheckIn, Event, ParsedEnvelope, SessionAggregates, SessionUpdate, Transaction};
 
 // ── Limits ────────────────────────────────────────────────────────────────
 
@@ -195,6 +195,10 @@ fn parse_envelope_binary(data: &[u8], limits: &EnvelopeLimits) -> Result<ParsedE
                         tracing::warn!(item = "sessions", error = %e, "dropping session aggregates: deserialize failed")
                     }
                 },
+                "check_in" => match serde_json::from_str::<CheckIn>(body_text) {
+                    Ok(c) => result.check_ins.push(c),
+                    Err(e) => tracing::warn!(item = "check_in", error = %e, "dropping check_in: deserialize failed"),
+                },
                 _ => tracing::debug!(item_type = %hdr.item_type, "ignoring unknown envelope item type"),
             }
         }
@@ -334,6 +338,27 @@ pub fn extract_sentry_key(auth_header: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_check_in_item() {
+        let envelope = br#"{"sent_at":"2026-01-01T00:00:00Z"}
+{"type":"check_in"}
+{"check_in_id":"c1","monitor_slug":"nightly","status":"ok","duration":1.5,"monitor_config":{"schedule":{"type":"crontab","value":"0 3 * * *"},"checkin_margin":5,"max_runtime":10,"timezone":"UTC"}}
+{"type":"check_in"}
+{"check_in_id":"c2","monitor_slug":"nightly","status":"in_progress"}
+"#;
+        let result = parse_envelope(envelope, None).unwrap();
+        assert_eq!(result.check_ins.len(), 2);
+        let c = &result.check_ins[0];
+        assert_eq!(c.monitor_slug, "nightly");
+        assert_eq!(c.status, trapfall_proto::CheckInStatus::Ok);
+        assert_eq!(c.duration, Some(1.5));
+        let cfg = c.monitor_config.as_ref().unwrap();
+        assert_eq!(cfg.crontab(), Some("0 3 * * *"));
+        assert_eq!(cfg.checkin_margin, Some(5));
+        assert_eq!(result.check_ins[1].status, trapfall_proto::CheckInStatus::InProgress);
+        assert!(result.check_ins[1].monitor_config.is_none());
+    }
 
     // ── Existing text-based tests (backward compat) ──
 

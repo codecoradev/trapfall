@@ -279,6 +279,15 @@ fn tools_list() -> Vec<Value> {
             }),
         ),
         tool(
+            "list_monitors",
+            "List Sentry Crons monitors for a project with their last check-in status (ok, in_progress, error, missed)",
+            json!({
+                "type": "object",
+                "properties": { "project_slug": { "type": "string", "description": "Project slug" } },
+                "required": ["project_slug"]
+            }),
+        ),
+        tool(
             "list_events",
             "List events for a specific issue",
             json!({
@@ -321,6 +330,7 @@ async fn call_tool(name: &str, args: Value, store: &Store) -> Result<Value, Stri
         "get_project" => tool_get_project(args, store).await,
         "get_project_stats" => tool_get_project_stats(args, store).await,
         "list_alert_rules" => tool_list_alert_rules(args, store).await,
+        "list_monitors" => tool_list_monitors(args, store).await,
         "list_events" => tool_list_events(args, store).await,
         "rotate_dsn" => tool_rotate_dsn(args, store).await,
         "healthcheck" => tool_healthcheck(store).await,
@@ -486,6 +496,26 @@ async fn tool_list_alert_rules(args: Value, store: &Store) -> Result<Value, Stri
                 "conditions": r.conditions,
                 "action_type": r.action_type,
                 "cooldown_seconds": r.cooldown_seconds,
+            })
+        })
+        .collect();
+    Ok(text_response(&list))
+}
+
+async fn tool_list_monitors(args: Value, store: &Store) -> Result<Value, String> {
+    let slug = args.get("project_slug").and_then(|v| v.as_str()).ok_or("missing project_slug")?;
+    let project = resolve_slug(slug, store).await?;
+    let monitors = store.backend().list_monitors(&project.id).await.map_err(|e| e.to_string())?;
+    let list: Vec<Value> = monitors
+        .iter()
+        .map(|m| {
+            json!({
+                "id": m.id,
+                "slug": m.slug,
+                "schedule": m.schedule,
+                "checkin_margin": m.checkin_margin,
+                "last_status": m.last_status,
+                "last_seen": m.last_seen,
             })
         })
         .collect();

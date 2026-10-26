@@ -8,6 +8,7 @@ pub mod digest;
 pub mod log_time;
 pub mod metrics;
 pub mod migrate;
+pub mod monitor;
 pub mod rate_limit;
 pub mod retention;
 pub mod scrub;

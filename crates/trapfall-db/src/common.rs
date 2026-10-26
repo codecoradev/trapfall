@@ -149,6 +149,31 @@ impl From<SessionRow> for crate::StoredSession {
 
 // ── Transaction + Span row types ─────────────────────────────────────
 
+/// Stored Sentry Crons monitor. `schedule` is a crontab expression.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct MonitorRow {
+    pub id: String,
+    pub project_id: String,
+    pub slug: String,
+    pub schedule: Option<String>,
+    /// Grace period in minutes.
+    pub checkin_margin: Option<i64>,
+    pub last_seen: String,
+    pub last_status: String,
+    pub created_at: String,
+}
+
+/// Stored monitor check-in.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct CheckInRow {
+    pub id: String,
+    pub monitor_id: String,
+    pub check_in_id: String,
+    pub status: String,
+    pub duration: Option<f64>,
+    pub received_at: String,
+}
+
 /// Stored transaction row.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TransactionRow {

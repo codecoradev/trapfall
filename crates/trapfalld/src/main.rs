@@ -219,6 +219,7 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
     let alert_tx = spawn_alert_engine(store.clone(), 256);
 
     // Digest task
+    let retention_alert_tx = alert_tx.clone();
     let digest = DigestTask::new(store.clone(), ingest_rx).with_ws_sender(ws_broadcast_tx).with_alert_sender(alert_tx);
     let digest_handle = tokio::spawn(async move {
         if let Err(e) = digest.run().await {
@@ -238,7 +239,9 @@ async fn run_server(store: Store, listen: String, db_url: String) -> Result<()> 
     let retention_handle = {
         let store_clone = store.clone();
         let days = config.retention_days;
-        tokio::spawn(async move { trapfalld::retention::run_retention(&store_clone, Some(days)).await })
+        tokio::spawn(async move {
+            trapfalld::retention::run_retention(&store_clone, Some(days), Some(retention_alert_tx)).await
+        })
     };
 
     // App state

@@ -436,6 +436,118 @@ impl Database for SqliteBackend {
         Ok(count)
     }
 
+    // ── Crons / Monitors ───────────────────────────────────────────────
+
+    async fn record_check_in(
+        &self,
+        project_id: &str,
+        check_in: &trapfall_proto::CheckIn,
+        received_at: &str,
+    ) -> Result<()> {
+        let cfg = check_in.monitor_config.as_ref();
+        let mut tx = self.pool.begin().await?;
+        let monitor_id: String = sqlx::query_scalar(
+            "INSERT INTO monitors (id, project_id, slug, schedule, checkin_margin, last_seen, last_status, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(project_id, slug) DO UPDATE SET last_seen = excluded.last_seen, \
+             last_status = excluded.last_status, \
+             schedule = COALESCE(excluded.schedule, monitors.schedule), \
+             checkin_margin = COALESCE(excluded.checkin_margin, monitors.checkin_margin) \
+             RETURNING id",
+        )
+        .bind(new_id())
+        .bind(project_id)
+        .bind(&check_in.monitor_slug)
+        .bind(cfg.and_then(|c| c.crontab()))
+        .bind(cfg.and_then(|c| c.checkin_margin))
+        .bind(received_at)
+        .bind(check_in.status.as_str())
+        .bind(received_at)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO monitor_checkins (id, monitor_id, project_id, check_in_id, status, duration, received_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(new_id())
+        .bind(&monitor_id)
+        .bind(project_id)
+        .bind(&check_in.check_in_id)
+        .bind(check_in.status.as_str())
+        .bind(check_in.duration)
+        .bind(received_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_monitors(&self, project_id: &str) -> Result<Vec<crate::common::MonitorRow>> {
+        Ok(sqlx::query_as::<_, crate::common::MonitorRow>(
+            "SELECT id, project_id, slug, schedule, checkin_margin, last_seen, last_status, created_at \
+             FROM monitors WHERE project_id = ? ORDER BY slug",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn list_schedulable_monitors(&self) -> Result<Vec<crate::common::MonitorRow>> {
+        Ok(sqlx::query_as::<_, crate::common::MonitorRow>(
+            "SELECT id, project_id, slug, schedule, checkin_margin, last_seen, last_status, created_at \
+             FROM monitors WHERE schedule IS NOT NULL AND last_status != 'missed'",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn mark_monitor_missed(&self, monitor_id: &str) -> Result<()> {
+        sqlx::query("UPDATE monitors SET last_status = 'missed' WHERE id = ?")
+            .bind(monitor_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_check_ins(
+        &self,
+        project_id: &str,
+        monitor_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Option<(Vec<crate::common::CheckInRow>, i64)>> {
+        let owned: Option<i64> = sqlx::query_scalar("SELECT 1 FROM monitors WHERE id = ? AND project_id = ?")
+            .bind(monitor_id)
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        if owned.is_none() {
+            return Ok(None);
+        }
+        let rows = sqlx::query_as::<_, crate::common::CheckInRow>(
+            "SELECT id, monitor_id, check_in_id, status, duration, received_at FROM monitor_checkins \
+             WHERE monitor_id = ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(monitor_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM monitor_checkins WHERE monitor_id = ?")
+            .bind(monitor_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(Some((rows, total)))
+    }
+
+    async fn purge_old_check_ins(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM monitor_checkins WHERE received_at < ?")
+            .bind(cutoff_rfc3339_days(days))
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     // ── Release Health ────────────────────────────────────────────────
 
     async fn insert_release_health(

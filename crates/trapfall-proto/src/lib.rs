@@ -501,6 +501,67 @@ pub struct ParsedEnvelope {
     pub session_updates: Vec<SessionUpdate>,
     pub session_aggregates: Vec<SessionAggregates>,
     pub attachments: Vec<Attachment>,
+    pub check_ins: Vec<CheckIn>,
+}
+
+/// Sentry Crons check-in status as sent by SDKs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckInStatus {
+    Ok,
+    InProgress,
+    Error,
+}
+
+impl CheckInStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::InProgress => "in_progress",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// Monitor schedule, e.g. `{"type":"crontab","value":"0 * * * *"}`.
+/// `value` is a string for crontab but a number for interval schedules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorSchedule {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub value: serde_json::Value,
+}
+
+/// Optional monitor upsert config attached to a check-in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MonitorConfig {
+    pub schedule: Option<MonitorSchedule>,
+    /// Grace period in minutes.
+    pub checkin_margin: Option<i64>,
+    /// Max runtime in minutes.
+    pub max_runtime: Option<i64>,
+    pub timezone: Option<String>,
+}
+
+impl MonitorConfig {
+    /// The crontab expression, if the schedule is a crontab.
+    pub fn crontab(&self) -> Option<&str> {
+        let s = self.schedule.as_ref().filter(|s| s.kind == "crontab")?;
+        s.value.as_str()
+    }
+}
+
+/// Sentry Crons `check_in` envelope item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckIn {
+    pub check_in_id: String,
+    pub monitor_slug: String,
+    pub status: CheckInStatus,
+    /// Seconds.
+    pub duration: Option<f64>,
+    pub timestamp: Option<f64>,
+    pub monitor_config: Option<MonitorConfig>,
 }
 
 #[cfg(test)]
