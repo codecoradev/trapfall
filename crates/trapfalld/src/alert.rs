@@ -4,14 +4,83 @@ use tokio::sync::mpsc;
 use trapfall_core::Store;
 use trapfall_proto::{AlertRule, Issue};
 
+/// Input of the alert engine.
+#[derive(Debug, Clone)]
+pub enum AlertSignal {
+    Issue(Issue),
+    /// A cron monitor missed its expected check-in.
+    MonitorMissed {
+        project_id: String,
+        monitor_slug: String,
+        last_status: String,
+        last_seen: String,
+        schedule: Option<String>,
+    },
+}
+
+impl AlertSignal {
+    fn project_id(&self) -> &str {
+        match self {
+            Self::Issue(i) => &i.project_id,
+            Self::MonitorMissed { project_id, .. } => project_id,
+        }
+    }
+
+    /// Value stored in `alert_history.issue_id` (no FK on that column).
+    fn history_ref(&self) -> String {
+        match self {
+            Self::Issue(i) => i.id.clone(),
+            Self::MonitorMissed { monitor_slug, .. } => format!("monitor:{monitor_slug}"),
+        }
+    }
+
+    fn matches(&self, rule: &AlertRule) -> bool {
+        match self {
+            Self::Issue(i) => matches_rule(rule, i),
+            // Issue-specific conditions can't apply to a monitor; only unconditioned
+            // rules fire for it.
+            Self::MonitorMissed { .. } => {
+                !["level", "count_gte", "title_contains"].iter().any(|k| rule.conditions.get(k).is_some())
+            }
+        }
+    }
+
+    fn payload(&self, rule: &AlertRule) -> serde_json::Value {
+        match self {
+            Self::Issue(issue) => serde_json::json!({
+                "rule": rule.name,
+                "action": "webhook",
+                "issue": {
+                    "id": issue.id,
+                    "title": issue.title,
+                    "level": format!("{:?}", issue.level).to_lowercase(),
+                    "status": format!("{:?}", issue.status).to_lowercase(),
+                    "count": issue.count,
+                    "project_id": issue.project_id,
+                    "culprit": issue.culprit,
+                    "last_seen": issue.last_seen,
+                }
+            }),
+            Self::MonitorMissed { project_id, monitor_slug, last_status, last_seen, schedule } => serde_json::json!({
+                "type": "monitor_missed",
+                "project_id": project_id,
+                "monitor_slug": monitor_slug,
+                "last_status": last_status,
+                "last_seen": last_seen,
+                "schedule": schedule,
+            }),
+        }
+    }
+}
+
 /// Spawn the alert engine background task.
-pub fn spawn_alert_engine(store: Store, _buffer: usize) -> mpsc::UnboundedSender<Issue> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<Issue>();
+pub fn spawn_alert_engine(store: Store, _buffer: usize) -> mpsc::UnboundedSender<AlertSignal> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<AlertSignal>();
 
     tokio::spawn(async move {
-        while let Some(issue) = rx.recv().await {
-            if let Err(e) = process_issue(&store, &issue).await {
-                tracing::warn!("Alert engine error for issue {}: {e}", issue.id);
+        while let Some(signal) = rx.recv().await {
+            if let Err(e) = process_signal(&store, &signal).await {
+                tracing::warn!("Alert engine error for {}: {e}", signal.history_ref());
             }
         }
         tracing::info!("Alert engine task stopped");
@@ -20,11 +89,11 @@ pub fn spawn_alert_engine(store: Store, _buffer: usize) -> mpsc::UnboundedSender
     tx
 }
 
-async fn process_issue(store: &Store, issue: &Issue) -> anyhow::Result<()> {
-    let rules = store.get_enabled_rules_for_project(&issue.project_id).await?;
+async fn process_signal(store: &Store, signal: &AlertSignal) -> anyhow::Result<()> {
+    let rules = store.get_enabled_rules_for_project(signal.project_id()).await?;
 
     for rule in rules {
-        if !matches_rule(&rule, issue) {
+        if !signal.matches(&rule) {
             continue;
         }
 
@@ -33,10 +102,10 @@ async fn process_issue(store: &Store, issue: &Issue) -> anyhow::Result<()> {
             continue;
         }
 
-        let history_id = store.insert_alert_history(&rule.id, &issue.project_id, &issue.id).await?;
+        let history_id = store.insert_alert_history(&rule.id, signal.project_id(), &signal.history_ref()).await?;
 
         let result = match rule.action_type.as_str() {
-            "webhook" => dispatch_webhook(&rule, issue).await,
+            "webhook" => dispatch_webhook(&rule, &signal.payload(&rule)).await,
             other => {
                 tracing::warn!("Unknown action type: {other}");
                 Err(anyhow::anyhow!("unknown action type: {other}"))
@@ -140,7 +209,7 @@ fn vet_addrs(addrs: &[std::net::IpAddr]) -> Result<(), String> {
 ///
 /// DNS is resolved exactly once; every address is vetted and the connection is
 /// pinned to the vetted addresses (no second lookup, so no rebinding window).
-async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()> {
+async fn dispatch_webhook(rule: &AlertRule, payload: &serde_json::Value) -> anyhow::Result<()> {
     let url = rule
         .action_config
         .get("url")
@@ -179,22 +248,7 @@ async fn dispatch_webhook(rule: &AlertRule, issue: &Issue) -> anyhow::Result<()>
     }
     let client = builder.build()?;
 
-    let payload = serde_json::json!({
-        "rule": rule.name,
-        "action": "webhook",
-        "issue": {
-            "id": issue.id,
-            "title": issue.title,
-            "level": format!("{:?}", issue.level).to_lowercase(),
-            "status": format!("{:?}", issue.status).to_lowercase(),
-            "count": issue.count,
-            "project_id": issue.project_id,
-            "culprit": issue.culprit,
-            "last_seen": issue.last_seen,
-        }
-    });
-
-    let resp = client.post(parsed_url).json(&payload).timeout(std::time::Duration::from_secs(5)).send().await?;
+    let resp = client.post(parsed_url).json(payload).timeout(std::time::Duration::from_secs(5)).send().await?;
 
     if resp.status().is_success() {
         tracing::info!("Webhook dispatched to {host} for rule '{}'", rule.name);
@@ -294,6 +348,83 @@ fn dns_resolve_host(host: &str, port: u16) -> std::io::Result<Vec<std::net::Sock
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn webhook_rule(conditions: serde_json::Value) -> AlertRule {
+        serde_json::from_value(serde_json::json!({
+            "id": "r1", "project_id": "p1", "name": "rule", "enabled": true,
+            "conditions": conditions, "action_type": "webhook",
+            "action_config": {"url": "https://example.com/h"}, "cooldown_seconds": 60,
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn monitor_missed_payload_and_matching() {
+        let sig = AlertSignal::MonitorMissed {
+            project_id: "p1".into(),
+            monitor_slug: "nightly".into(),
+            last_status: "ok".into(),
+            last_seen: "2026-01-01T03:00:05Z".into(),
+            schedule: Some("0 3 * * *".into()),
+        };
+        let rule = webhook_rule(serde_json::json!({}));
+        assert_eq!(
+            sig.payload(&rule),
+            serde_json::json!({
+                "type": "monitor_missed", "project_id": "p1", "monitor_slug": "nightly",
+                "last_status": "ok", "last_seen": "2026-01-01T03:00:05Z", "schedule": "0 3 * * *"
+            })
+        );
+        assert!(sig.matches(&rule));
+        assert!(!sig.matches(&webhook_rule(serde_json::json!({"level": ["error"]}))));
+        assert_eq!(sig.history_ref(), "monitor:nightly");
+    }
+
+    #[tokio::test]
+    async fn process_signal_monitor_missed_dispatch_and_cooldown() {
+        let backend = trapfall_db::open_database("sqlite::memory:").await.unwrap();
+        trapfall_db::run_sqlite_migrations(backend.sqlite_pool().unwrap()).await.unwrap();
+        let store = Store::new(backend);
+        let project = store.create_project("cron", "Cron").await.unwrap();
+        // Plain-http URL is rejected before any network I/O, so dispatch fails
+        // deterministically and offline; that is enough to exercise the history path.
+        let rule = store
+            .create_alert_rule(&project.id, "r", "{}", "webhook", r#"{"url":"http://example.com/h"}"#, 3600)
+            .await
+            .unwrap();
+        let sig = AlertSignal::MonitorMissed {
+            project_id: project.id.clone(),
+            monitor_slug: "nightly".into(),
+            last_status: "ok".into(),
+            last_seen: "2026-01-01T03:00:05Z".into(),
+            schedule: Some("0 3 * * *".into()),
+        };
+        let history = || async {
+            sqlx::query_as::<_, (String, String)>("SELECT issue_id, status FROM alert_history WHERE rule_id = ?")
+                .bind(&rule.id)
+                .fetch_all(store.backend().sqlite_pool().unwrap())
+                .await
+                .unwrap()
+        };
+
+        process_signal(&store, &sig).await.unwrap();
+        assert_eq!(history().await, vec![("monitor:nightly".to_string(), "failed".to_string())]);
+
+        // Failed sends don't start a cooldown, so a second signal dispatches again.
+        process_signal(&store, &sig).await.unwrap();
+        assert_eq!(history().await.len(), 2);
+
+        // A successful send puts the rule on cooldown: the next signal is skipped.
+        let sent: (String,) = sqlx::query_as("SELECT id FROM alert_history WHERE rule_id = ? LIMIT 1")
+            .bind(&rule.id)
+            .fetch_one(store.backend().sqlite_pool().unwrap())
+            .await
+            .unwrap();
+        store.mark_alert_sent(&sent.0).await.unwrap();
+        process_signal(&store, &sig).await.unwrap();
+        assert_eq!(history().await.len(), 2);
+    }
 
     #[test]
     fn test_ip_is_private_loopback() {

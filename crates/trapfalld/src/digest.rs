@@ -4,6 +4,7 @@
 //! and commits to the database periodically or when the buffer is full.
 //! After processing, broadcasts ServerMessages via the WebSocket hub.
 
+use crate::alert::AlertSignal;
 use tokio::sync::mpsc;
 use trapfall_core::Store;
 use trapfall_proto::{IngestEvent, Issue, ServerMessage};
@@ -18,7 +19,7 @@ pub struct DigestTask {
     store: Store,
     rx: mpsc::Receiver<IngestEvent>,
     ws_tx: Option<mpsc::UnboundedSender<ServerMessage>>,
-    alert_tx: Option<mpsc::UnboundedSender<Issue>>,
+    alert_tx: Option<mpsc::UnboundedSender<AlertSignal>>,
 }
 
 impl DigestTask {
@@ -33,7 +34,7 @@ impl DigestTask {
     }
 
     /// Attach a channel for alert engine notifications.
-    pub fn with_alert_sender(mut self, tx: mpsc::UnboundedSender<Issue>) -> Self {
+    pub fn with_alert_sender(mut self, tx: mpsc::UnboundedSender<AlertSignal>) -> Self {
         self.alert_tx = Some(tx);
         self
     }
@@ -80,7 +81,7 @@ impl DigestTask {
         store: &Store,
         buffer: &mut Vec<IngestEvent>,
         ws_tx: &Option<mpsc::UnboundedSender<ServerMessage>>,
-        alert_tx: &Option<mpsc::UnboundedSender<Issue>>,
+        alert_tx: &Option<mpsc::UnboundedSender<AlertSignal>>,
     ) {
         let events = std::mem::take(buffer);
         let count = events.len();
@@ -97,7 +98,7 @@ impl DigestTask {
                         let _ = tx.send(msg);
                     }
                     if let Some(tx) = alert_tx {
-                        let _ = tx.send(issue.clone());
+                        let _ = tx.send(AlertSignal::Issue(issue.clone()));
                     }
                 }
                 Err(e) => {

@@ -202,6 +202,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/0/projects/{slug}/transactions", get(list_transactions))
         .route("/api/0/projects/{slug}/transactions/slowest", get(get_slowest_transactions))
         .route("/api/0/projects/{slug}/transactions/{txn_id}", get(get_transaction))
+        .route("/api/0/projects/{slug}/monitors", get(list_monitors))
+        .route("/api/0/projects/{slug}/monitors/{monitor_id}/checkins", get(list_monitor_checkins))
         .route("/api/0/ws", get(crate::ws::ws_handler))
         // Attachment endpoints
         .route("/api/0/events/{event_id}/attachments", get(list_event_attachments))
@@ -480,6 +482,15 @@ async fn ingest_envelope(
         }
     }
 
+    // Persist Sentry Crons check-ins (auto-registers the monitor). Written here
+    // like transactions rather than via the digest channel, which is event-only.
+    let received_at = chrono::Utc::now().to_rfc3339();
+    for ci in parsed.check_ins.iter().filter(|c| !c.monitor_slug.is_empty() && c.monitor_slug.len() <= 128) {
+        if let Err(e) = store.backend().record_check_in(&project.id, ci, &received_at).await {
+            tracing::warn!(error = %e, monitor = %ci.monitor_slug, "Failed to record check-in");
+        }
+    }
+
     // Persist session aggregates
     for agg in &parsed.session_aggregates {
         match store.insert_release_health(&project.id, agg).await {
@@ -530,6 +541,7 @@ async fn ingest_envelope(
         .first()
         .map(|e| e.event_id.clone())
         .or_else(|| parsed.transactions.first().map(|t| t.event_id.clone()))
+        .or_else(|| parsed.check_ins.first().map(|c| c.check_in_id.clone()))
         .unwrap_or_default();
 
     if parsed.events.is_empty() && parsed.transactions.is_empty() {
@@ -817,6 +829,62 @@ async fn search_issues(
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+// ── Monitor (Crons) Handlers ────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+struct ListCheckInsQuery {
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_per_page")]
+    per_page: u32,
+}
+
+async fn list_monitors(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<trapfall_db::common::MonitorRow>>, StatusCode> {
+    let project = state
+        .store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let monitors = state.store.backend().list_monitors(&project.id).await.map_err(|e| {
+        tracing::warn!(error = %e, project_slug = %slug, "list_monitors failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(monitors))
+}
+
+async fn list_monitor_checkins(
+    State(state): State<AppState>,
+    Path((slug, monitor_id)): Path<(String, String)>,
+    Query(query): Query<ListCheckInsQuery>,
+) -> Result<Json<ListResponse<trapfall_db::common::CheckInRow>>, StatusCode> {
+    let project = state
+        .store
+        .get_project_by_slug(&slug)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let limit = query.per_page.clamp(1, 100) as i64;
+    let page = query.page.max(1);
+    let offset = ((page - 1) as i64) * limit;
+
+    let (data, total) = state
+        .store
+        .backend()
+        .list_check_ins(&project.id, &monitor_id, limit, offset)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, project_slug = %slug, "list_check_ins failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(ListResponse { data, total, page, per_page: limit as u32 }))
 }
 
 // ── Transaction Handlers ────────────────────────────────────────────────

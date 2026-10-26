@@ -279,3 +279,30 @@ async fn test_rotate_dsn_succeeds_and_masks_key() {
     let text = resp["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("New key:"), "{text}");
 }
+
+#[tokio::test]
+async fn test_list_monitors_tool() {
+    use trapfall_proto::{CheckIn, CheckInStatus};
+    let store = setup_store().await;
+    let project = store.create_project("cron", "Cron").await.unwrap();
+    let ci = CheckIn {
+        check_in_id: "c1".into(),
+        monitor_slug: "nightly".into(),
+        status: CheckInStatus::Error,
+        duration: None,
+        timestamp: None,
+        monitor_config: None,
+    };
+    store.backend().record_check_in(&project.id, &ci, "2026-01-01T03:00:05Z").await.unwrap();
+
+    let call = |args: Value| rpc_request("tools/call", json!({"name": "list_monitors", "arguments": args}));
+    let resp = parse_response(&send(&store, call(json!({"project_slug": "cron"}))).await);
+    let monitors: Vec<Value> = serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["slug"], "nightly");
+    assert_eq!(monitors[0]["last_status"], "error");
+    assert_eq!(monitors[0]["last_seen"], "2026-01-01T03:00:05Z");
+
+    let resp = parse_response(&send(&store, call(json!({"project_slug": "missing"}))).await);
+    assert_eq!(resp["result"]["isError"], true);
+}

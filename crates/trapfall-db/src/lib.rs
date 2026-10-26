@@ -155,6 +155,7 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
     if !has_seq {
         sqlx::query(include_str!("../../trapfalld/migrations/20260701000001_project_seq.sql")).execute(pool).await?;
     }
+    sqlx::query(include_str!("../../trapfalld/migrations/20260801000001_monitors.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -179,6 +180,7 @@ pub async fn run_postgres_migrations(pool: &sqlx::PgPool) -> Result<()> {
     sqlx::query(include_str!("../migrations/postgres/004_release_health.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/005_attachments.sql")).execute(pool).await?;
     sqlx::query(include_str!("../migrations/postgres/006_project_seq.sql")).execute(pool).await?;
+    sqlx::query(include_str!("../migrations/postgres/007_monitors.sql")).execute(pool).await?;
     Ok(())
 }
 
@@ -272,6 +274,32 @@ pub trait Database: Send + Sync {
         transaction_id: &str,
     ) -> Result<Option<(crate::common::TransactionRow, Vec<crate::common::SpanRow>)>>;
     async fn count_transactions(&self, project_id: &str) -> Result<i64>;
+
+    // ── Crons / Monitors ───────────────────────────────────────────────
+
+    /// Upsert the monitor for `check_in.monitor_slug` (auto-registering it) and
+    /// append the check-in, in one transaction. `monitor_config` fields, when
+    /// present, overwrite the stored schedule/margin.
+    async fn record_check_in(
+        &self,
+        project_id: &str,
+        check_in: &trapfall_proto::CheckIn,
+        received_at: &str,
+    ) -> Result<()>;
+    async fn list_monitors(&self, project_id: &str) -> Result<Vec<crate::common::MonitorRow>>;
+    /// Monitors of all projects that have a schedule and are not already `missed`.
+    async fn list_schedulable_monitors(&self) -> Result<Vec<crate::common::MonitorRow>>;
+    async fn mark_monitor_missed(&self, monitor_id: &str) -> Result<()>;
+    /// Newest first. `None` if the monitor does not belong to `project_id`.
+    async fn list_check_ins(
+        &self,
+        project_id: &str,
+        monitor_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Option<(Vec<crate::common::CheckInRow>, i64)>>;
+    /// Delete check-ins older than `days` days (monitor rows are kept).
+    async fn purge_old_check_ins(&self, days: i64) -> Result<u64>;
 
     // ── Release Health ────────────────────────────────────────────────
 
